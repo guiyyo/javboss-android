@@ -1,0 +1,44 @@
+name: Bug 报告
+description: 反馈一个可复现的问题
+labels: [ bug ]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 哪一端
+      options:
+        - 手机
+        - 平板
+        - Android TV
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统版本
+      placeholder: 例如 Android 9 电视盒子 / Android 15 手机
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App 版本
+      placeholder: 见 设置 -> 版本，例如 0.24.1
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: 1. 打开... 2. 点击... 3. 出现...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: TV 端可在「设置 -> 诊断日志」用手机扫码导出
