@@ -44,7 +44,7 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk "out/javboss-android-${VER}-arm64-armv7.apk"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: out/*.apk
           generate_release_notes: true
