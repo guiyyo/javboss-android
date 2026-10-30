@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  JavBoss 服务通常部署在局域网并使用 http://，因此允许明文流量。
+  生产环境建议在服务器侧启用 HTTPS（反向代理），客户端已优先使用 https。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,27 @@
+# --- Android / Gradle ---
+.gradle/
+.kotlin/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*.hprof
+*.aab
+*.log
+
+# --- 签名，绝对不要提交 ---
+keystore.properties
+*.jks
+*.keystore
+release.jks
+
+# --- IDE / OS ---
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- 但保留发布用的 APK ---
+!releases/*.apk

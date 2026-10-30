@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅作为渲染容器：控制器由 Compose 自绘（use_controller=false）。
+  surface_type=texture_view：便于截图 / 自动化读取界面层级（SurfaceView 会返回 null root）。
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/player_view"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    app:use_controller="false"
+    app:surface_type="texture_view"
+    app:resize_mode="fit"
+    app:show_buffering="never" />
