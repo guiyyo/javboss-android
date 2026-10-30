@@ -129,6 +129,17 @@ cd javboss-android/android
 ./gradlew assembleRelease   # 正式包（arm64-v8a + armeabi-v7a）
 ```
 
+## 贡献者
+
+<a href="https://github.com/guiyyo"><img src="https://github.com/guiyyo.png?size=80" width="48" alt="guiyyo"></a>
+<a href="https://github.com/Solr159"><img src="https://github.com/Solr159.png?size=80" width="48" alt="Solr159"></a>
+
+- **guiyyo** — 客户端作者 / 维护者
+- **Solr159** — 上游 [JavBoss](https://github.com/Solr159/JavBoss) 服务端作者（本项目的接口来源）
+
+完整名单与第三方组件致谢见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
+
+欢迎参与：提交 [Issue](../../issues/new/choose) 或 Pull Request，合并后名字会加进名单。
 ## 致谢
 
 - [Solr159/JavBoss](https://github.com/Solr159/JavBoss)：服务端与数据接口来源
