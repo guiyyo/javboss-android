@@ -21,7 +21,7 @@ jobs:
           java-version: '21'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       # 有签名 Secrets 时才签正式包，否则产出未签名包也能用于自测
       - name: Decode keystore
