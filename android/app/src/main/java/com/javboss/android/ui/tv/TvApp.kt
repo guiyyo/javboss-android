@@ -1178,6 +1178,7 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                 currentVersion = com.javboss.android.BuildConfig.VERSION_NAME,
                 mirror = prefs.updateMirror,
                 onDismiss = { tvUpdate = null },
+                tvMode = true,
             )
         }
         if (pinSetupOpen) {

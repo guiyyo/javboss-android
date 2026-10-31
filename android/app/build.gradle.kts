@@ -29,8 +29,8 @@ android {
         applicationId = "com.javboss.android"
         minSdk = if (compatMode) 24 else 22
         targetSdk = 36
-        versionCode = 95
-        versionName = "0.33.0"
+        versionCode = 98
+        versionName = "0.33.2"
         ndk {
             // 电视盒子多为 32 位（armeabi-v7a），手机多为 64 位（arm64-v8a）；两个都打进去，同一个包两端可装
             abiFilters += if (compatMode) {

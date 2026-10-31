@@ -1,9 +1,16 @@
 package com.javboss.android.ui.update
 
+import android.content.Intent
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -16,15 +23,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import android.content.Intent
 import com.javboss.android.data.update.ApkInstaller
 import com.javboss.android.data.update.UpdateChecker
 import kotlinx.coroutines.launch
 
 /**
- * 更新弹窗：App 内下载 APK → 自动调起系统安装器。
+ * 更新弹窗：展示完整更新说明（可滚动）→ App 内下载 APK → 自动调起系统安装器。
+ *
+ * [tvMode] 为 true 时（电视端），说明区域可用遥控器方向键 ↑↓ 滚动。
  */
 @Composable
 fun UpdateDialog(
@@ -34,6 +51,7 @@ fun UpdateDialog(
     onDismiss: () -> Unit,
     /** 启动提示里可「跳过此版本」，设置里传 null 表示不显示 */
     onSkipVersion: (() -> Unit)? = null,
+    tvMode: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -41,6 +59,9 @@ fun UpdateDialog(
     var progress by remember { mutableStateOf<Float?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    val notesScroll = rememberScrollState()
+    val notesFocus = remember { FocusRequester() }
 
     fun start() {
         val apk = info.apkUrl
@@ -93,10 +114,39 @@ fun UpdateDialog(
                 )
                 if (info.notes.isNotBlank()) {
                     Text(
-                        info.notes.take(600),
-                        style = MaterialTheme.typography.bodySmall,
+                        if (tvMode) "更新内容（方向键 ↑↓ 滚动）" else "更新内容（上下滑动查看全部）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
                     )
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 340.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                            .then(if (tvMode) Modifier.focusable().focusRequester(notesFocus) else Modifier)
+                            .onKeyEvent { ev ->
+                                if (!tvMode || ev.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                when (ev.key) {
+                                    Key.DirectionUp -> {
+                                        scope.launch { notesScroll.animateScrollBy(-180f) }
+                                        true
+                                    }
+                                    Key.DirectionDown -> {
+                                        scope.launch { notesScroll.animateScrollBy(180f) }
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
+                            .verticalScroll(notesScroll)
+                            .padding(10.dp),
+                    ) {
+                        Text(
+                            info.notes.trim(),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 status?.let {
                     Text(

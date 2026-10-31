@@ -15,7 +15,13 @@ object BiometricGate {
 
     fun isAvailable(context: Context): Boolean {
         val manager = BiometricManager.from(context)
-        return manager.canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+        // API < 30 不支持 BIOMETRIC_WEAK|DEVICE_CREDENTIAL 组合，只能用生物识别单体判断
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            manager.canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+        } else {
+            manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
+                BiometricManager.BIOMETRIC_SUCCESS
+        }
     }
 
     fun hasBiometricOnly(context: Context): Boolean {
@@ -60,12 +66,18 @@ object BiometricGate {
                 }
             },
         )
-        val info = BiometricPrompt.PromptInfo.Builder()
+        val builder = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
-            .setAllowedAuthenticators(AUTHENTICATORS)
             .setConfirmationRequired(false)
-            .build()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            builder.setAllowedAuthenticators(AUTHENTICATORS)
+        } else {
+            // 老系统：生物识别 + 负按钮取消（不能带 DEVICE_CREDENTIAL）
+            builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+            builder.setNegativeButtonText("取消")
+        }
+        val info = builder.build()
         runCatching { prompt.authenticate(info) }
             .onFailure { onError(it.message ?: "无法启动指纹验证") }
     }

@@ -134,15 +134,22 @@ private fun AppRootContent() {
     }
 
 
-    when (authState) {
-        AuthState.Checking -> SplashScreen()
-        AuthState.LoggedOut -> LoginScreen(onLoggedIn = { authState = AuthState.LoggedIn })
-        AuthState.LoggedIn -> {
-            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-                MainScaffold(onLoggedOut = { authState = AuthState.LoggedOut })
-                // 进入主界面后在后台静默检查更新（不阻塞、不转圈）
-                com.javboss.android.ui.update.UpdateCheckerHost()
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+        when (authState) {
+            AuthState.Checking -> SplashScreen()
+            AuthState.LoggedOut -> LoginScreen(onLoggedIn = { authState = AuthState.LoggedIn })
+            AuthState.LoggedIn -> {
+                androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                    MainScaffold(onLoggedOut = { authState = AuthState.LoggedOut })
+                    // 进入主界面后在后台静默检查更新（不阻塞、不转圈）
+                    com.javboss.android.ui.update.UpdateCheckerHost()
+                }
             }
+        }
+
+        // 指纹 / 锁屏密码解锁（冷启动或设备锁屏后重新进入时）
+        if (locked) {
+            com.javboss.android.ui.lock.LockScreen(onUnlocked = { AppGraph.lock.unlock() })
         }
     }
 }
