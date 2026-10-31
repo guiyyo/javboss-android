@@ -553,13 +553,28 @@ private fun JavDetailVideos(
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         IconButton(onClick = { onOpenScreenshots(video.id) }) {
                             Icon(Icons.Filled.PhotoLibrary, contentDescription = "截图")
                         }
-                        FilledTonalButton(onClick = { onPlay(video.id, video.locationId, item.zhTitle.ifBlank { item.title }) }) {
-                            Text("播放")
+                        androidx.compose.foundation.layout.BoxWithConstraints {
+                            // 窄列（平板右栏 / 强平板模式下）只显示图标，避免挤压文件名与时长
+                            if (maxWidth < 360.dp) {
+                                IconButton(onClick = { onPlay(video.id, video.locationId, item.zhTitle.ifBlank { item.title }) }) {
+                                    Icon(Icons.Filled.PlayArrow, contentDescription = "播放", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            } else {
+                                FilledTonalButton(
+                                    onClick = { onPlay(video.id, video.locationId, item.zhTitle.ifBlank { item.title }) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                ) {
+                                    Text("播放", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
                         }
                     }
                 }

@@ -81,6 +81,15 @@ fun TvPlayerScreen(
     // Kodi 风格：连按累加，停顿后再真正跳转，OSD 显示「+30 秒 · 目标 00:34:12」
     var pendingSeekMs by remember { mutableStateOf(0L) }
     var seekOsdVisible by remember { mutableStateOf(false) }
+    // 字幕：自动加载已缓存字幕 + 偏移 + 显示开关
+    var subCues by remember { mutableStateOf<List<com.javboss.android.data.subtitle.SubtitleCue>>(emptyList()) }
+    var subName by remember { mutableStateOf<String?>(null) }
+    var subOffset by remember { mutableStateOf(0L) }
+    var subCode by remember { mutableStateOf("") }
+    var subVisible by remember { mutableStateOf(true) }
+    var subPos by remember { mutableStateOf(0L) }
+    var panelOpen by remember { mutableStateOf(false) }
+    var subSkipped by remember { mutableStateOf(false) }
     var seekOsdTarget by remember { mutableStateOf(0L) }
     val seekScope = androidx.compose.runtime.rememberCoroutineScope()
     var seekJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -147,6 +156,37 @@ fun TvPlayerScreen(
         }
     }
 
+    // 进播放页：自动套用该番号已下载的字幕
+    LaunchedEffect(javId) {
+        if (javId <= 0) return@LaunchedEffect
+        val code = runCatching {
+            (com.javboss.android.di.AppGraph.jav.detail(javId) as? com.javboss.android.core.net.ApiResult.Success)?.data?.code
+        }.getOrNull().orEmpty()
+        if (code.isBlank()) return@LaunchedEffect
+        subCode = code
+        val skipped = runCatching { com.javboss.android.di.AppGraph.settings.subtitleSkipped(code) }.getOrDefault(false)
+        subSkipped = skipped
+        if (skipped) return@LaunchedEffect
+        val inst = com.javboss.android.di.AppGraph.subtitle.current(code) ?: return@LaunchedEffect
+        val f = java.io.File(inst.filePath)
+        if (!f.exists()) return@LaunchedEffect
+        subCues = runCatching {
+            com.javboss.android.data.subtitle.parseSrtCues(f.readText(Charsets.UTF_8))
+        }.getOrDefault(emptyList())
+        subName = inst.name
+        subOffset = inst.offsetMs
+    }
+
+    // 字幕时钟（100ms），播片时跟随
+    LaunchedEffect(subCues.size) {
+        if (subCues.isEmpty()) return@LaunchedEffect
+        while (true) {
+            val p = vm.player?.currentPosition ?: 0L
+            if (p > 0) subPos = p
+            delay(100)
+        }
+    }
+
     LaunchedEffect(overlayVisible, isPlaying) {
         if (overlayVisible && isPlaying) { delay(5000); overlayVisible = false }
     }
@@ -159,6 +199,16 @@ fun TvPlayerScreen(
             .focusable()
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                // 字幕键（175）或遥控器菜单键 → 打开字幕面板
+                if (event.nativeKeyEvent.keyCode == 175 || event.key == Key.Menu) {
+                    panelOpen = !panelOpen
+                    overlayVisible = true
+                    return@onKeyEvent true
+                }
+                if (panelOpen && event.key == Key.Back) {
+                    panelOpen = false
+                    return@onKeyEvent true
+                }
                 // 续播提示：「OK」继续播放，「←」从头开始
                 val resumePrompt = !vm.state.resumeDecided && vm.state.resumeMs > 5000
                 if (resumePrompt) {
@@ -279,6 +329,80 @@ fun TvPlayerScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        // 播放中：菜单键打开「偏移 / 是否使用字幕」窗口（不含搜索下载）
+        if (panelOpen) {
+            TvSubtitleOffsetDialog(
+                currentName = subName,
+                currentOffsetMs = subOffset,
+                skipped = subSkipped,
+                hasCues = subCues.isNotEmpty(),
+                onClose = { panelOpen = false },
+                onShift = { delta ->
+                    subOffset += delta
+                    val code = subCode
+                    val name = subName
+                    if (code.isNotBlank() && name != null) {
+                        kotlinx.coroutines.MainScope().launch {
+                            runCatching {
+                                com.javboss.android.di.AppGraph.settings.setSubtitleSelection(code, name, subOffset)
+                            }
+                        }
+                    }
+                },
+                onReset = {
+                    val code = subCode
+                    val name = subName
+                    subOffset = 0L
+                    if (code.isNotBlank() && name != null) {
+                        kotlinx.coroutines.MainScope().launch {
+                            runCatching {
+                                com.javboss.android.di.AppGraph.settings.setSubtitleSelection(code, name, 0L)
+                            }
+                        }
+                    }
+                },
+                onDetach = {
+                    subCues = emptyList()
+                    subName = null
+                    subOffset = 0L
+                    kotlinx.coroutines.MainScope().launch {
+                        runCatching { com.javboss.android.di.AppGraph.subtitle.clear(subCode) }
+                    }
+                },
+                onToggleSkip = { skip ->
+                    subSkipped = skip
+                    if (skip) { subCues = emptyList(); subName = null }
+                    kotlinx.coroutines.MainScope().launch {
+                        runCatching { com.javboss.android.di.AppGraph.settings.setSubtitleSkipped(subCode, skip) }
+                    }
+                },
+            )
+        }
+
+        // 自绘字幕（自绘层，偏移即时生效）
+        if (subVisible && subCues.isNotEmpty()) {
+            val t0 = subPos - subOffset
+            val cue = subCues.firstOrNull { t0 >= it.startMs && t0 < it.endMs }?.text
+            if (!cue.isNullOrBlank()) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = if (overlayVisible) 150.dp else 40.dp, start = 60.dp, end = 60.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        cue,
+                        color = Color.White,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
                 }
             }
         }
@@ -431,7 +555,7 @@ fun TvPlayerScreen(
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = "OK 播放/暂停 · ←→ 快进退 · ↑ 信息 · ↓ 倍速",
+                        text = "OK 播放/暂停 · ←→ 快进退 · ↑ 信息 · ↓ 倍速 · 菜单键 字幕",
                         color = Color.White.copy(alpha = 0.6f),
                         style = MaterialTheme.typography.labelSmall,
                     )

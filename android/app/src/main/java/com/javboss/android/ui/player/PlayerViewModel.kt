@@ -53,6 +53,18 @@ data class PlayerUiState(
     val speed: Float = 1.0f,
     /** 播放失败时是否可切换另一种源 */
     val canSwitchSource: Boolean = false,
+    /** 已加载的字幕文件名 */
+    val subtitleName: String? = null,
+    /** 字幕偏移（毫秒） */
+    val subtitleOffsetMs: Long = 0L,
+    /** 当前作品的番号（用于字幕搜索） */
+    val javCode: String = "",
+    /** 视频自带（内嵌）字幕轨道数量 */
+    val embeddedSubtitleCount: Int = 0,
+    /** 当前是否在用内嵌字幕 */
+    val usingEmbeddedSubtitle: Boolean = false,
+    /** 自绘字幕内容（改偏移不需要重建播放器） */
+    val subtitleCues: List<com.javboss.android.data.subtitle.SubtitleCue> = emptyList(),
 )
 
 /**
@@ -78,6 +90,10 @@ class PlayerViewModel : ViewModel() {
     private var playCountReported = false
     private var hlsFallbackTried = false
 
+    private var subtitleFile: java.io.File? = null
+    private var lastInfo: com.javboss.android.data.model.PlaybackInfo? = null
+    private var lastSource: com.javboss.android.data.model.PlaybackSource? = null
+    private var boundJavId: Long = 0
     private var sessionId: String? = null
     private var accumulatedMs: Long = 0
     /** 本地观看记录 key（按服务器地址隔离） */
@@ -88,6 +104,7 @@ class PlayerViewModel : ViewModel() {
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) { forceTextTrack(player) }
             if (playbackState == Player.STATE_READY && !playCountReported) {
                 playCountReported = true
                 viewModelScope.launch { AppGraph.video.incrementPlayCount(videoId) }
@@ -154,6 +171,8 @@ class PlayerViewModel : ViewModel() {
         state = state.copy(loading = true, error = null, title = title)
         attach(context)
 
+
+
         viewModelScope.launch {
             val streams = AppGraph.video.streams(videoId, locationId)
             if (streams is ApiResult.Failure) {
@@ -219,24 +238,27 @@ class PlayerViewModel : ViewModel() {
             state = state.copy(loading = false, error = "服务端未提供可播放的媒体源")
             return
         }
+        lastInfo = info
+        lastSource = source
         val baseUrl = AppGraph.video.baseUrl()
         val url = ApiClient.absoluteUrl(baseUrl, source.src)
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .apply { if (source.kind == "hls") setMimeType(MimeTypes.APPLICATION_M3U8) }
-            .build()
-        val mediaSource: MediaSource = if (source.kind == "hls") {
-            val factory = OkHttpDataSource.Factory(ApiClient.okHttp)
-            HlsMediaSource.Factory(factory).createMediaSource(mediaItem)
-        } else {
-            val factory = OkHttpDataSource.Factory(ApiClient.okHttp)
-            ProgressiveMediaSource.Factory(factory).createMediaSource(mediaItem)
-        }
+        val builder = MediaItem.Builder().setUri(url)
+        if (source.kind == "hls") builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+        val mediaItem = builder.build()
+        // 字幕是本地 file:// 资源，必须用 DefaultDataSource（file 走 FileDataSource，http 走 OkHttp）
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(
+            com.javboss.android.di.AppGraph.context,
+            OkHttpDataSource.Factory(ApiClient.okHttp),
+        )
+        val mediaSource: MediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+            .createMediaSource(mediaItem)
+        android.util.Log.i("JavBossPlayer", "startSource(kind=${source.kind}) subtitle=${state.subtitleName}")
         state = state.copy(usedKind = source.kind, loading = false, error = null)
         exo.setMediaSource(mediaSource, positionMs.coerceAtLeast(0))
         exo.prepare()
         exo.playWhenReady = autoPlay
         exo.setPlaybackSpeed(state.speed)
+        forceTextTrack(exo)
         beginWatchedTracking()
     }
 
@@ -346,6 +368,141 @@ class PlayerViewModel : ViewModel() {
     }
 
     /* ---------------- 倍速 / 续播 / 切源 / 队列 ---------------- */
+
+    /* ------------------------------------------------------------ 字幕 */
+
+    /** 挂载字幕文件（只解析内容，不重建播放器，不会黑屏）。 */
+    fun attachSubtitle(name: String, file: java.io.File, offsetMs: Long = 0L) {
+        subtitleFile = file
+        val cues = runCatching {
+            com.javboss.android.data.subtitle.parseSrtCues(file.readText(Charsets.UTF_8))
+        }.getOrDefault(emptyList())
+        state = state.copy(
+            subtitleName = name,
+            subtitleCues = cues,
+            subtitleOffsetMs = offsetMs,
+            usingEmbeddedSubtitle = false,
+        )
+    }
+
+    fun detachSubtitle() {
+        subtitleFile = null
+        state = state.copy(subtitleName = null, subtitleCues = emptyList(), subtitleOffsetMs = 0L)
+    }
+
+    /** 偏移只改内存与持久化，不重新加载视频。 */
+    fun shiftSubtitleOffset(deltaMs: Long) {
+        android.util.Log.i("JavBossSub", "shift=$deltaMs (no reload)")
+        val next = state.subtitleOffsetMs + deltaMs
+        state = state.copy(subtitleOffsetMs = next)
+        val code = state.javCode
+        val name = state.subtitleName ?: return
+        viewModelScope.launch {
+            runCatching { AppGraph.settings.setSubtitleSelection(code, name, next) }
+        }
+    }
+
+    fun resetSubtitleOffset() {
+        val minus = -state.subtitleOffsetMs
+        shiftSubtitleOffset(minus)
+    }
+
+
+    /** 绑定作品番号，并自动套用上次用过的字幕。 */
+    fun bindJav(javId: Long) {
+        if (javId <= 0) return
+        if (boundJavId == javId) return
+        boundJavId = javId
+        viewModelScope.launch {
+            val detail = AppGraph.jav.detail(javId)
+            val code = (detail as? ApiResult.Success)?.data?.code.orEmpty()
+            if (code.isBlank()) return@launch
+            setJavCode(code)
+            // 用户标记过「本片无需字幕」就不再自动挂外挂字幕
+            if (runCatching { AppGraph.settings.subtitleSkipped(code) }.getOrDefault(false)) return@launch
+            val inst = AppGraph.subtitle.current(code) ?: return@launch
+            val f = java.io.File(inst.filePath)
+            if (f.exists()) {
+                subtitleFile = f
+                attachSubtitle(inst.name, f, inst.offsetMs)
+                // 不重建播放器
+            }
+        }
+    }
+
+    /** 播放器内的一次性提示（snackbar）。 */
+    fun toast(msg: String) {
+        state = state.copy(message = msg)
+    }
+
+    fun clearToast() {
+        if (state.message != null) state = state.copy(message = null)
+    }
+
+    fun setJavCode(code: String) {
+        if (state.javCode != code) state = state.copy(javCode = code)
+    }
+
+    /** 确保已挂载的字幕被真正选中渲染（Media3 有时不会自动选）。 */
+    private fun forceTextTrack(exo: ExoPlayer?) {
+        val e = exo ?: return
+        runCatching {
+            val params = e.trackSelectionParameters.buildUpon()
+                .setPreferredTextLanguage("zh")
+                .setSelectUndeterminedTextLanguage(true)
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
+                .build()
+            e.trackSelectionParameters = params
+            val textGroups = e.currentTracks.groups.filter {
+                it.type == androidx.media3.common.C.TRACK_TYPE_TEXT
+            }
+            if (textGroups.isNotEmpty()) {
+                val b = e.trackSelectionParameters.buildUpon()
+                textGroups.forEach { g ->
+                    b.addOverride(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, 0))
+                }
+                e.trackSelectionParameters = b.build()
+            }
+            android.util.Log.i(
+                "JavBossPlayer",
+                "textTracks=${textGroups.size} selected=${textGroups.count { it.isSelected }} sub=${state.subtitleName}",
+            )
+            inspectTracks(e)
+        }
+    }
+
+    /** 统计内嵌字幕轨：有外挂字幕时减掉那一条。 */
+    private fun inspectTracks(exo: ExoPlayer) {
+        runCatching {
+            val total = exo.currentTracks.groups.count { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+            val embedded = if (subtitleFile != null) (total - 1).coerceAtLeast(0) else total
+            state = state.copy(
+                embeddedSubtitleCount = embedded,
+                usingEmbeddedSubtitle = subtitleFile == null && embedded > 0,
+            )
+        }
+    }
+
+    /** 改用视频自带的内嵌字幕（去掉外挂，不重建播放器）。 */
+    fun useEmbeddedSubtitle() {
+        subtitleFile = null
+        state = state.copy(
+            subtitleName = null,
+            subtitleCues = emptyList(),
+            subtitleOffsetMs = 0L,
+            usingEmbeddedSubtitle = true,
+        )
+        player?.let { forceTextTrack(it) }
+    }
+
+    private fun reloadWithSubtitle() {
+        val info = lastInfo ?: return
+        val src = lastSource ?: return
+        val exo = player ?: return
+        val pos = exo.currentPosition.coerceAtLeast(0)
+        val playing = exo.playWhenReady
+        startSource(info, src, pos, playing)
+    }
 
     fun setSpeed(speed: Float) {
         state = state.copy(speed = speed)

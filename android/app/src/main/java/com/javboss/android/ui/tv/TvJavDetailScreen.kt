@@ -2,31 +2,27 @@ package com.javboss.android.ui.tv
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import com.javboss.android.data.repo.JavQuery
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material.icons.Icons
-import kotlinx.coroutines.launch
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,27 +31,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.javboss.android.core.net.ApiResult
 import com.javboss.android.data.model.JavItem
+import com.javboss.android.data.repo.JavQuery
 import com.javboss.android.di.AppGraph
 import com.javboss.android.ui.common.NetworkImage
 import com.javboss.android.ui.common.formatDuration
+import com.javboss.android.ui.common.formatMinutesHm
 
-/** TV 详情页：左封面 + 右信息 + 剧集列表（全部可遥控器聚焦）。 */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun TvJavDetailScreen(
     javId: Long,
     onBack: () -> Unit,
-    onPlayVideo: (videoId: Long, locationId: Long, title: String) -> Unit,
+    onPlayVideo: (Long, Long, String) -> Unit,
     onOpenIdolWorks: (Long, String) -> Unit,
-    /** 详情页内筛选/跳转统一走这里：标题 + 查询条件 */
     onOpenFiltered: (String, JavQuery) -> Unit,
 ) {
     val baseUrl = remember { AppGraph.video.baseUrl().trimEnd('/') }
@@ -65,6 +59,10 @@ fun TvJavDetailScreen(
     var reloadKey by remember { mutableStateOf(0) }
     val firstVideoFocus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
     val requesterFor = rememberTvFocusRestorer()
+    var subPanelOpen by remember { mutableStateOf(false) }
+    var subInstalledName by remember { mutableStateOf<String?>(null) }
+    var subOffsetMs by remember { mutableStateOf(0L) }
+    var subSkipped by remember { mutableStateOf(false) }
     var favoriteDialogOpen by remember { mutableStateOf(false) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -73,6 +71,15 @@ fun TvJavDetailScreen(
             is ApiResult.Success -> item = result.data
             is ApiResult.Failure -> error = result.message
         }
+    }
+
+    // 读取已下载字幕状态
+    LaunchedEffect(item?.id) {
+        val code = item?.code ?: return@LaunchedEffect
+        val inst = com.javboss.android.di.AppGraph.subtitle.current(code)
+        subInstalledName = inst?.name
+        subOffsetMs = inst?.offsetMs ?: 0L
+        subSkipped = runCatching { com.javboss.android.di.AppGraph.settings.subtitleSkipped(code) }.getOrDefault(false)
     }
 
     // 进入详情后默认聚焦到「播放」按钮
@@ -95,6 +102,7 @@ fun TvJavDetailScreen(
         return
     }
 
+    Box(Modifier.fillMaxSize()) {
     Row(Modifier.fillMaxSize().padding(28.dp), verticalAlignment = Alignment.Top) {
         // 左：封面 + 番号 + 剧集（宽度按比例，给右侧留出空间）
         // 左列：高度随内容自适应；只有内容超出屏幕时才可滚动
@@ -252,6 +260,29 @@ fun TvJavDetailScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 6.dp),
             )
+            // 字幕：查找 / 下载（播放时会自动套用）
+            TvFocusable(
+                onClick = { subPanelOpen = true },
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                shape = RoundedCornerShape(10.dp),
+                outlined = true,
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("字幕", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        text = subInstalledName?.let { " · $it" } ?: " · 查找 / 下载字幕",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 10.dp),
+                    )
+                }
+            }
+
 
             val meta = buildList {
                 detail.studio?.let { add("片商：${it.name}") }
@@ -354,6 +385,21 @@ fun TvJavDetailScreen(
 
 
 
+
+    }
+}
+
+        // 字幕：只做查找 / 下载（偏移在播放页的菜单键窗口里调）
+        if (subPanelOpen) {
+            TvSubtitleSearchDialog(
+                code = detail.code,
+                currentName = subInstalledName,
+                onClose = { subPanelOpen = false },
+                onLoaded = { inst ->
+                    subInstalledName = inst.name
+                    subSkipped = false
+                },
+            )
         }
     }
 }

@@ -65,6 +65,7 @@ import com.javboss.android.ui.server.ResourceScreen
 import com.javboss.android.ui.settings.SettingsScreen
 import com.javboss.android.ui.settings.TranslationScreen
 import com.javboss.android.ui.video.VideoListScreen
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -117,27 +118,32 @@ private fun AppRootContent() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-
-    // 锁屏作为覆盖层显示：主界面（含导航栈）保持挂载，解锁后回到原页面
-    if (locked) {
-        com.javboss.android.ui.lock.LockScreen(onUnlocked = { AppGraph.lock.unlock() })
-    }
-
     var authState by remember { mutableStateOf<AuthState>(AuthState.Checking) }
 
+    // 启动鉴权：带超时，网络异常也不会一直转圈（超时按未登录处理）
     LaunchedEffect(Unit) {
-        val status = AppGraph.auth.status()
-        authState = if (status is ApiResult.Success && status.data.authenticated) {
+        val status = kotlinx.coroutines.withTimeoutOrNull(10_000) {
+            runCatching { AppGraph.auth.status() }.getOrNull()
+        }
+        authState = if (status is com.javboss.android.core.net.ApiResult.Success && status.data.authenticated) {
             AuthState.LoggedIn
         } else {
             AuthState.LoggedOut
         }
+        android.util.Log.i("JavBossAuth", "startup status=$status → $authState")
     }
+
 
     when (authState) {
         AuthState.Checking -> SplashScreen()
         AuthState.LoggedOut -> LoginScreen(onLoggedIn = { authState = AuthState.LoggedIn })
-        AuthState.LoggedIn -> MainScaffold(onLoggedOut = { authState = AuthState.LoggedOut })
+        AuthState.LoggedIn -> {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                MainScaffold(onLoggedOut = { authState = AuthState.LoggedOut })
+                // 进入主界面后在后台静默检查更新（不阻塞、不转圈）
+                com.javboss.android.ui.update.UpdateCheckerHost()
+            }
+        }
     }
 }
 
@@ -409,6 +415,7 @@ private fun MainScaffoldInner(navController: androidx.navigation.NavHostControll
                     onLoggedOut = onLoggedOut,
                     onBack = { navController.popBackStack() },
                     onOpenDirectories = { navController.navigate("directories") },
+            onOpenServerConfig = { navController.navigate("serverconfig") },
                     onOpenDownloads = { navController.navigate("downloads") },
                     onOpenResources = { navController.navigate("resources") },
                     onOpenProviders = { navController.navigate("providers") },
@@ -443,6 +450,9 @@ private fun MainScaffoldInner(navController: androidx.navigation.NavHostControll
             composable("translation") { TranslationScreen(onBack = { navController.popBackStack() }) }
 
             composable("directories") { DirectoryScreen(onBack = { navController.popBackStack() }) }
+        composable("serverconfig") {
+            com.javboss.android.ui.server.ServerConfigScreen(onBack = { navController.popBackStack() })
+        }
             composable("downloads") { DownloadScreen(onBack = { navController.popBackStack() }) }
             composable("resources") { ResourceScreen(onBack = { navController.popBackStack() }) }
             composable("providers") { ProviderScreen(onBack = { navController.popBackStack() }) }

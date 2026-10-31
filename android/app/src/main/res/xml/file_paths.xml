@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="logs" path="logs/" />
     <files-path name="crash" path="crash/" />
+    <cache-path name="apk" path="apk/" />
 </paths>

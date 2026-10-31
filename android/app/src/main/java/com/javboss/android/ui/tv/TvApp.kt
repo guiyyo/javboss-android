@@ -82,6 +82,8 @@ import com.javboss.android.ui.common.formatDuration
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /** TV 端页面栈。 */
@@ -277,8 +279,13 @@ private fun TvContent(onLogout: () -> Unit) {
             .background(MaterialTheme.colorScheme.background)
             .onPreviewKeyEvent { event ->
                 // 遥控器「设置」键直达应用设置
+                // 播放页里菜单键归播放器（打开字幕面板），其余页面菜单键=进设置
+                val inPlayer = current is TvScreen.Player
                 if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                    (event.key == androidx.compose.ui.input.key.Key.Settings || event.key == androidx.compose.ui.input.key.Key.Menu)
+                    (
+                        event.key == androidx.compose.ui.input.key.Key.Settings ||
+                            (event.key == androidx.compose.ui.input.key.Key.Menu && !inPlayer)
+                        )
                 ) {
                     switchTo(TvTab.Settings)
                     true
@@ -866,6 +873,11 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
     var modeOpen by remember { mutableStateOf(false) }
     var pendingMode by remember { mutableStateOf("auto") }
     var pinSetupOpen by remember { mutableStateOf(false) }
+    var tvChecking by remember { mutableStateOf(false) }
+    var tvUpdate by remember { mutableStateOf<com.javboss.android.data.update.UpdateChecker.UpdateInfo?>(null) }
+    var tvUpdateMsg by remember { mutableStateOf<String?>(null) }
+    var tvSpeedTesting by remember { mutableStateOf(false) }
+    var tvSpeedMsg by remember { mutableStateOf<String?>(null) }
     var pinConfirm by remember { mutableStateOf("") }
     var crashText by remember { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -925,6 +937,87 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                 )
             }
         }
+        item { TvSectionHeader("更新") }
+        item {
+            TvSettingRow(
+                "检查更新",
+                when {
+                    tvChecking -> "检查中…"
+                    tvUpdate != null -> "发现新版本 v${tvUpdate!!.latestVersion}"
+                    tvUpdateMsg != null -> tvUpdateMsg!!
+                    else -> "v${com.javboss.android.BuildConfig.VERSION_NAME}"
+                },
+            ) {
+                if (tvChecking) return@TvSettingRow
+                tvChecking = true
+                tvUpdateMsg = null
+                scope.launch {
+                    com.javboss.android.data.update.UpdateChecker
+                        .check(com.javboss.android.BuildConfig.VERSION_NAME)
+                        .onSuccess { info ->
+                            if (info.hasUpdate) {
+                                tvUpdate = info
+                            } else {
+                                tvUpdateMsg = "已是最新版本"
+                                message = "已是最新版本"
+                            }
+                        }
+                        .onFailure { tvUpdateMsg = "检查失败：${it.message}"; message = "检查失败：${it.message}" }
+                    tvChecking = false
+                }
+            }
+        }
+        item {
+            TvSettingRow(
+                "下载镜像",
+                com.javboss.android.data.update.UpdateMirror.label(prefs.updateMirror),
+            ) {
+                val list = com.javboss.android.data.update.UpdateMirror.PRESETS
+                val idx = list.indexOfFirst { it.first == prefs.updateMirror }
+                val next = list[(if (idx < 0) 0 else idx + 1) % list.size]
+                scope.launch { AppGraph.settings.setUpdateMirror(next.first) }
+                message = "下载镜像：${next.second}"
+            }
+        }
+        item {
+            TvSettingRow("镜像测速", if (tvSpeedMsg != null) tvSpeedMsg!! else "自动测速并应用最快") {
+                if (tvSpeedTesting) return@TvSettingRow
+                tvSpeedTesting = true
+                tvSpeedMsg = "测速中…"
+                scope.launch {
+                    val apk = com.javboss.android.data.update.UpdateChecker
+                        .check(com.javboss.android.BuildConfig.VERSION_NAME)
+                        .getOrNull()?.apkUrl
+                    if (apk.isNullOrBlank()) {
+                        tvSpeedMsg = "拿不到 APK 地址"
+                        tvSpeedTesting = false
+                        return@launch
+                    }
+                    var best: com.javboss.android.data.update.MirrorSpeed? = null
+                    coroutineScope {
+                        com.javboss.android.data.update.UpdateMirror.PRESETS.map { it.first }.chunked(4).forEach { g ->
+                            g.map { m ->
+                                async {
+                                    com.javboss.android.data.update.UpdateMirrorTester.test(m, apk)
+                                }
+                            }.map { it.await() }.forEach { r ->
+                                if (r.ok && r.kbps > 0 && (best == null || r.kbps > best!!.kbps)) best = r
+                            }
+                        }
+                    }
+                    val chosen = best
+                    if (chosen != null) {
+                        AppGraph.settings.setUpdateMirror(chosen.mirror)
+                        tvSpeedMsg = "${chosen.label} · ${chosen.kbps} KB/s"
+                        message = "已应用最快镜像：${chosen.label}（${chosen.kbps} KB/s）"
+                    } else {
+                        tvSpeedMsg = "全部失败"
+                    }
+                    tvSpeedTesting = false
+                }
+            }
+        }
+
         item { TvSectionHeader("显示与外观") }
         item {
             TvSettingRow(
@@ -1078,6 +1171,14 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
     }
         if (crashOpen) {
             TvCrashOverlay(crashText) { crashOpen = false }
+        }
+        tvUpdate?.let { info ->
+            com.javboss.android.ui.update.UpdateDialog(
+                info = info,
+                currentVersion = com.javboss.android.BuildConfig.VERSION_NAME,
+                mirror = prefs.updateMirror,
+                onDismiss = { tvUpdate = null },
+            )
         }
         if (pinSetupOpen) {
             TvPinSetupOverlay(

@@ -42,8 +42,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.javboss.android.core.net.ApiResult
-import com.javboss.android.data.model.TagCategory
 import com.javboss.android.data.model.TagCount
+import com.javboss.android.data.model.JavTagCount
+import com.javboss.android.data.model.JavTagCategoryRef
 import com.javboss.android.data.model.VideoRow
 import com.javboss.android.di.AppGraph
 import com.javboss.android.ui.common.EmptyBox
@@ -54,9 +55,9 @@ import kotlinx.coroutines.launch
 /* ================================================================ 标签管理 */
 
 class TagManagementViewModel : ViewModel() {
-    var tags by mutableStateOf<List<TagCount>>(emptyList())
+    var tags by mutableStateOf<List<JavTagCount>>(emptyList())
         private set
-    var categories by mutableStateOf<List<TagCategory>>(emptyList())
+    var categories by mutableStateOf<List<JavTagCategoryRef>>(emptyList())
         private set
     var loading by mutableStateOf(true)
         private set
@@ -68,11 +69,12 @@ class TagManagementViewModel : ViewModel() {
     fun load() {
         loading = true
         viewModelScope.launch {
-            when (val tagResult = AppGraph.tags.tags()) {
+            // 与网页一致：管理的是 JAV 标签（/jav/tags），不是视频标签（/tags）
+            when (val tagResult = AppGraph.jav.tags()) {
                 is ApiResult.Success -> { tags = tagResult.data; error = null }
                 is ApiResult.Failure -> error = tagResult.message
             }
-            when (val catResult = AppGraph.tags.categories()) {
+            when (val catResult = AppGraph.jav.tagCategories()) {
                 is ApiResult.Success -> categories = catResult.data
                 is ApiResult.Failure -> Unit
             }
@@ -80,18 +82,20 @@ class TagManagementViewModel : ViewModel() {
         }
     }
 
-    fun createTag(name: String) = mutate { AppGraph.tags.createTag(name).mapUnit() }
+    fun createTag(name: String) = mutate { AppGraph.jav.createTag(name) }
 
-    fun renameTag(id: Long, name: String) = mutate { AppGraph.tags.renameTag(id, name) }
+    fun renameTag(id: Long, name: String) = mutate { AppGraph.jav.renameTag(id, name) }
 
-    fun deleteTag(id: Long) = mutate { AppGraph.tags.deleteTag(id) }
+    fun deleteTag(id: Long) = mutate { AppGraph.jav.deleteTag(id) }
 
-    fun createCategory(name: String) = mutate { AppGraph.tags.createCategory(name).mapUnit() }
+    fun deleteTags(ids: List<Long>) = mutate { AppGraph.jav.deleteTags(ids) }
 
-    fun deleteCategory(id: Long) = mutate { AppGraph.tags.deleteCategory(id) }
+    fun createCategory(name: String) = mutate { AppGraph.jav.createTagCategory(name) }
+
+    fun deleteCategory(id: Long) = mutate { AppGraph.jav.deleteTagCategory(id) }
 
     fun assignCategory(tagIds: List<Long>, categoryId: Long?) =
-        mutate { AppGraph.tags.assignCategory(tagIds, categoryId) }
+        mutate { AppGraph.jav.assignTagCategory(tagIds, categoryId) }
 
     private fun mutate(block: suspend () -> ApiResult<Unit>) {
         viewModelScope.launch {
@@ -140,9 +144,9 @@ fun TagManagementScreen(onBack: () -> Unit, vm: TagManagementViewModel = viewMod
             when {
                 vm.loading -> LoadingBox(Modifier.fillMaxWidth())
                 vm.error != null -> ErrorBox(vm.error!!, onRetry = vm::load)
-                vm.tags.isEmpty() -> EmptyBox("还没有视频标签")
+                vm.tags.isEmpty() -> EmptyBox("还没有 JAV 标签")
                 else -> {
-                    Text("标签（${vm.tags.size}）", style = MaterialTheme.typography.titleSmall)
+                    Text("JAV 标签（${vm.tags.size}）", style = MaterialTheme.typography.titleSmall)
 
                     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         OutlinedTextField(
@@ -172,7 +176,7 @@ fun TagManagementScreen(onBack: () -> Unit, vm: TagManagementViewModel = viewMod
                     }
 
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        vm.tags.take(200).forEach { tag ->
+                        vm.tags.take(300).forEach { tag ->
                             FilterChip(
                                 selected = selected.contains(tag.id),
                                 onClick = {
@@ -180,7 +184,7 @@ fun TagManagementScreen(onBack: () -> Unit, vm: TagManagementViewModel = viewMod
                                 },
                                 label = {
                                     Text(
-                                        "${tag.name} (${tag.count})",
+                                        "${tag.simplifiedName.ifBlank { tag.name }} (${tag.count})",
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )

@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -41,6 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.javboss.android.data.settings.UiPrefs
 import com.javboss.android.di.AppGraph
 import com.javboss.android.ui.common.AppCard
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /**
@@ -55,6 +59,7 @@ fun SettingsScreen(
     onLoggedOut: () -> Unit,
     onBack: () -> Unit,
     onOpenDirectories: () -> Unit = {},
+    onOpenServerConfig: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
     onOpenResources: () -> Unit = {},
     onOpenProviders: () -> Unit = {},
@@ -72,6 +77,24 @@ fun SettingsScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     var crashLogOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var modeDialogOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var subtitleBaseDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var subtitleBaseInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var subtitleSelfTestDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var subtitleSelfTestInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var subtitleSelfTestResult by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var subtitleSelfTestRunning by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var checkingUpdate by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var updateResult by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var updateInfo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.javboss.android.data.update.UpdateChecker.UpdateInfo?>(null) }
+    var mirrorDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var mirrorInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var testingMirror by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var mirrorEditing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var autoApplied by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var testError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var speedResults by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<Map<String, com.javboss.android.data.update.MirrorSpeed>>(emptyMap())
+    }
     var pendingMode by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("auto") }
     var crashText by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     val biometricAvailable = androidx.compose.runtime.remember {
@@ -210,6 +233,102 @@ fun SettingsScreen(
                 )
             }
 
+            if (subtitleSelfTestDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { subtitleSelfTestDialog = false },
+                    title = { Text("在线字幕源自检") },
+                    text = {
+                        Column {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = subtitleSelfTestInput,
+                                onValueChange = { subtitleSelfTestInput = it },
+                                label = { Text("番号") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            if (subtitleSelfTestRunning) {
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                                )
+                            }
+                            if (subtitleSelfTestResult.isNotBlank()) {
+                                Text(
+                                    subtitleSelfTestResult,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(top = 10.dp),
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = !subtitleSelfTestRunning,
+                            onClick = {
+                                val code = subtitleSelfTestInput.trim()
+                                subtitleSelfTestRunning = true
+                                subtitleSelfTestResult = "搜索中…"
+                                scope.launch {
+                                    AppGraph.subtitle.searchOnline(code)
+                                        .onSuccess { list ->
+                                            subtitleSelfTestResult =
+                                                "搜索到 ${list.size} 条\n" +
+                                                    list.take(3).joinToString("\n") { "· ${it.title} (${it.language})" }
+                                            val first = list.firstOrNull()
+                                            if (first != null) {
+                                                subtitleSelfTestResult += "\n下载中…"
+                                                AppGraph.subtitle.install(code, first)
+                                                    .onSuccess { inst ->
+                                                        val kb = java.io.File(inst.filePath).length() / 1024
+                                                        subtitleSelfTestResult += "\n✔ ${inst.name} · ${kb}KB"
+                                                    }
+                                                    .onFailure { subtitleSelfTestResult += "\n✘ 安装失败：${it.message}" }
+                                            }
+                                        }
+                                        .onFailure { subtitleSelfTestResult = "✘ 搜索失败：${it.message}" }
+                                    subtitleSelfTestRunning = false
+                                }
+                            },
+                        ) { Text("开始") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { subtitleSelfTestDialog = false }) { Text("关闭") }
+                    },
+                )
+            }
+
+            if (subtitleBaseDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { subtitleBaseDialog = false },
+                    title = { Text("在线字幕源地址") },
+                    text = {
+                        Column {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = subtitleBaseInput,
+                                onValueChange = { subtitleBaseInput = it },
+                                placeholder = { Text("https://subtitlecat.com") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "镜像站地址可自行替换；留空则使用默认 SubtitleCat。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            subtitleBaseDialog = false
+                            scope.launch { AppGraph.settings.setSubtitleCatBase(subtitleBaseInput.trim()) }
+                        }) { Text("保存") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { subtitleBaseDialog = false }) { Text("取消") }
+                    },
+                )
+            }
+
             SectionCard("卡片显示（仅本机）") {
                 val config by com.javboss.android.di.AppGraph.config.config.collectAsState()
                 val webPortrait = (config["jav_card_portrait"] ?: "").let { it == "true" || it == "1" }
@@ -258,6 +377,50 @@ fun SettingsScreen(
                 SwitchRow("女优优先中文名", "有中文名时优先显示", prefs.idolPreferChinese) {
                     scope.launch { AppGraph.settings.setIdolPreferChinese(it) }
                 }
+            }
+
+            // 字幕
+            SectionCard("字幕（仅本机）") {
+                val folderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+                ) { uri ->
+                    if (uri != null) {
+                        runCatching {
+                            context.contentResolver.takePersistableUriPermission(
+                                uri,
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                            )
+                        }
+                        scope.launch { AppGraph.settings.setSubtitleFolder(uri.toString()) }
+                    }
+                }
+                NavRow(
+                    "本地字幕文件夹",
+                    if (prefs.subtitleFolder.isBlank()) "未选择（选一个放 .srt/.ass 的文件夹）"
+                    else "已选择（按番号自动匹配）",
+                ) { folderPicker.launch(null) }
+                if (prefs.subtitleFolder.isNotBlank()) {
+                    NavRow("清除字幕文件夹", "") {
+                        scope.launch { AppGraph.settings.setSubtitleFolder("") }
+                    }
+                }
+                NavRow(
+                    "在线源自检",
+                    subtitleSelfTestResult.ifBlank { "测试搜索 + 下载是否可用" },
+                ) {
+                    subtitleSelfTestInput = "SNOS-079"
+                    subtitleSelfTestResult = ""
+                    subtitleSelfTestDialog = true
+                }
+                NavRow("在线字幕源", prefs.subtitleCatBase) {
+                    subtitleBaseInput = prefs.subtitleCatBase
+                    subtitleBaseDialog = true
+                }
+                Text(
+                    "播放时点「字幕」按钮即可搜索/加载；加载后按番号记忆，下次自动套用。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             SectionCard("隐私与锁") {
@@ -314,6 +477,7 @@ fun SettingsScreen(
 
             SectionCard("服务器管理（会修改服务器）") {
                 NavRow("目录管理", "启用开关、扫描、统计", onOpenDirectories)
+                NavRow("服务器配置", "与 /config 对照（只读）", onOpenServerConfig)
                 NavRow("下载中心", "任务列表、重试/取消/删除、新建磁力", onOpenDownloads)
                 NavRow("下载设置", "并发数、最小体积、CloudDrive2", onOpenDownloader)
                 NavRow("服务器状态", "内存/磁盘、FFmpeg、运行信息", onOpenResources)
@@ -321,6 +485,58 @@ fun SettingsScreen(
                 NavRow("标签管理", "视频标签与分类的增删", onOpenTags)
                 NavRow("收藏夹管理", "四类实体的收藏夹增删与排序", onOpenFavorites)
                 NavRow("AI 批量翻译", "批量翻译任务：开始/停止/进度", onOpenTranslation)
+            }
+
+
+            SectionCard("关于 / 更新") {
+                NavRow("当前版本", "v${com.javboss.android.BuildConfig.VERSION_NAME}（${com.javboss.android.BuildConfig.VERSION_CODE}）") {}
+                NavRow(
+                    "检查更新",
+                    when {
+                        checkingUpdate -> "检查中…"
+                        updateResult != null -> updateResult!!
+                        else -> "从 GitHub Releases 获取最新版本"
+                    },
+                ) {
+                    if (checkingUpdate) return@NavRow
+                    checkingUpdate = true
+                    updateResult = null
+                    scope.launch {
+                        com.javboss.android.data.update.UpdateChecker
+                            .check(com.javboss.android.BuildConfig.VERSION_NAME)
+                            .onSuccess { info ->
+                                if (info.hasUpdate) {
+                                    updateInfo = info
+                                    updateResult = "发现新版本 v${info.latestVersion}"
+                                } else {
+                                    updateResult = "已是最新版本"
+                                }
+                            }
+                            .onFailure { updateResult = "检查失败：${it.message}" }
+                        checkingUpdate = false
+                    }
+                }
+                NavRow(
+                    "下载镜像",
+                    com.javboss.android.data.update.UpdateMirror.label(prefs.updateMirror),
+                ) {
+                    mirrorInput = ""
+                    mirrorEditing = false
+                    speedResults = emptyMap()
+                    autoApplied = null
+                    testError = null
+                    mirrorDialog = true
+                }
+                NavRow("打开 Releases 页面", com.javboss.android.data.update.UpdateChecker.RELEASES_PAGE) {
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(com.javboss.android.data.update.UpdateChecker.RELEASES_PAGE),
+                            ),
+                        )
+                    }
+                }
             }
 
             SectionCard("账号") {
@@ -358,6 +574,202 @@ fun SettingsScreen(
         }
     }
 
+    updateInfo?.let { info ->
+        com.javboss.android.ui.update.UpdateDialog(
+            info = info,
+            currentVersion = com.javboss.android.BuildConfig.VERSION_NAME,
+            mirror = prefs.updateMirror,
+            onDismiss = { updateInfo = null },
+        )
+    }
+
+    if (mirrorDialog) {
+        // 测速完成后按速度降序：可用优先、KB/s 高的在前，失败的排最后
+        val presetsOrdered = com.javboss.android.data.update.UpdateMirror.PRESETS.sortedWith(
+            compareByDescending<Pair<String, String>> { speedResults[it.first]?.ok == true }
+                .thenByDescending { speedResults[it.first]?.kbps ?: -1 },
+        )
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!testingMirror) mirrorDialog = false },
+            title = {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("更新下载镜像", modifier = Modifier.weight(1f))
+                    androidx.compose.material3.TextButton(
+                        enabled = !testingMirror,
+                        onClick = {
+                            testingMirror = true
+                            testError = null
+                            speedResults = emptyMap()
+                            scope.launch {
+                                val info = com.javboss.android.data.update.UpdateChecker
+                                    .check(com.javboss.android.BuildConfig.VERSION_NAME)
+                                    .getOrNull()
+                                val apk = info?.apkUrl
+                                if (apk.isNullOrBlank()) {
+                                    testError = "拿不到 APK 地址（GitHub API 不可达？）"
+                                    testingMirror = false
+                                    return@launch
+                                }
+                                val targets = com.javboss.android.data.update.UpdateMirror.PRESETS
+                                    .map { it.first }
+                                    .toMutableList()
+                                val custom = mirrorInput.trim()
+                                if (custom.isNotBlank() && !targets.contains(custom)) targets.add(custom)
+                                // 并发测速（每组 4 个）
+                                kotlinx.coroutines.coroutineScope {
+                                    targets.chunked(4).forEach { group ->
+                                        group.map { m ->
+                                            async {
+                                                m to com.javboss.android.data.update.UpdateMirrorTester.test(m, apk)
+                                            }
+                                        }.map { it.await() }.forEach { (m, r) ->
+                                            speedResults = speedResults + (m to r)
+                                        }
+                                    }
+                                }
+                                // 自动应用最快的可用镜像
+                                val best = speedResults.entries
+                                    .filter { it.value.ok && it.value.kbps > 0 }
+                                    .maxByOrNull { it.value.kbps }
+                                if (best != null) {
+                                    runCatching { AppGraph.settings.setUpdateMirror(best.key) }
+                                    autoApplied = "${best.value.label}（${best.value.kbps} KB/s）"
+                                } else {
+                                    autoApplied = null
+                                }
+                                testingMirror = false
+                            }
+                        },
+                    ) { Text(if (testingMirror) "测速中…" else "测速") }
+                }
+            },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
+                    presetsOrdered.forEach { (value, label) ->
+                        val speed = speedResults[value]
+                        val s = speed
+                        val speedText = when {
+                            testingMirror && s == null -> "测速中…"
+                            s == null -> ""
+                            !s.ok -> "失败"
+                            s.kbps <= 0 -> "超时（${s.ttfbMs}ms）"
+                            else -> "${s.kbps} KB/s · ${s.ttfbMs}ms"
+                        }
+                        val speedColor = when {
+                            s == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                            !s.ok -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                scope.launch { AppGraph.settings.setUpdateMirror(value) }
+                                mirrorDialog = false
+                            }.padding(vertical = 6.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                (if (value == prefs.updateMirror) "✔ " else "") + label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (value == prefs.updateMirror) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(speedText, style = MaterialTheme.typography.labelSmall, color = speedColor)
+                        }
+                    }
+
+                    // 自定义前缀：默认不聚焦、不弹键盘，点一下才编辑
+                    val focusRequester = androidx.compose.runtime.remember {
+                        androidx.compose.ui.focus.FocusRequester()
+                    }
+                    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+                    androidx.compose.runtime.LaunchedEffect(mirrorEditing) {
+                        if (mirrorEditing) {
+                            kotlinx.coroutines.delay(60)
+                            runCatching { focusRequester.requestFocus() }
+                            keyboard?.show()
+                        }
+                    }
+                    if (!mirrorEditing) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                                .clickable { mirrorEditing = true }
+                                .padding(horizontal = 16.dp, vertical = 16.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                mirrorInput.ifBlank { "自定义前缀（可选，点这里输入）" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (mirrorInput.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    } else {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = mirrorInput,
+                            onValueChange = { mirrorInput = it },
+                            label = { Text("自定义前缀（可选，留空=直连）") },
+                            placeholder = { Text("https://ghfast.top/") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .focusRequester(focusRequester),
+                        )
+                    }
+                    if (testError != null) {
+                        Text(
+                            testError!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    Text(
+                        "当前使用：${com.javboss.android.data.update.UpdateMirror.label(prefs.updateMirror)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    autoApplied?.let { best ->
+                        Text(
+                            "✔ 已自动应用最快镜像：$best",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    Text(
+                        "点某项可手动切换；测速后按速度降序排列（KB/s 越高越快）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    // 只有填了自定义前缀才覆盖；否则保留测速自动选中的镜像
+                    val custom = mirrorInput.trim()
+                    if (custom.isNotBlank()) {
+                        scope.launch { AppGraph.settings.setUpdateMirror(custom) }
+                    }
+                    mirrorDialog = false
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(enabled = !testingMirror, onClick = { mirrorDialog = false }) { Text("取消") }
+            },
+        )
+    }
     if (crashLogOpen) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { crashLogOpen = false }) {
             androidx.compose.material3.Card {

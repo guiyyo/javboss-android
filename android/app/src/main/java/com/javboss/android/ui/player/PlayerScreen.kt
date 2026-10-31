@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
@@ -88,6 +89,7 @@ import androidx.media3.ui.PlayerView
 import com.javboss.android.core.net.ApiResult
 import com.javboss.android.di.AppGraph
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlin.math.abs
 
@@ -126,12 +128,24 @@ fun PlayerScreen(
     var showQueue by remember { mutableStateOf(false) }
     var speedMenuOpen by remember { mutableStateOf(false) }
     var gestureHint by remember { mutableStateOf<String?>(null) }
+    var showSubtitle by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+    var subtitlePosMs by remember { mutableStateOf(0L) }
+    var skippedMarked by remember { mutableStateOf(false) }
+    LaunchedEffect(showSubtitle, javId) {
+        if (showSubtitle && vm.state.javCode.isNotBlank()) {
+            skippedMarked = runCatching {
+                AppGraph.settings.subtitleSkipped(vm.state.javCode)
+            }.getOrDefault(false)
+        }
+    }
     var autoPiP by remember { mutableStateOf(false) }
     var resumeCountdown by remember { mutableStateOf(5) }
 
     LaunchedEffect(Unit) {
         autoPiP = AppGraph.settings.uiPrefs.first().autoPictureInPicture
     }
+    LaunchedEffect(javId) { vm.bindJav(javId) }
 
     LaunchedEffect(videoId, locationId, javId, initialQueue) {
         if (initialQueue.isNotEmpty()) {
@@ -157,6 +171,22 @@ fun PlayerScreen(
         }
         vm.prepare(context, videoId, locationId, title)
         vm.refreshPendingScreenshots(context)
+    }
+
+    // 拖动/快进后立即对齐字幕时钟，避免字幕“消失”
+    LaunchedEffect(vm.state.subtitleCues.size, vm.player) {
+        if (vm.state.subtitleCues.isEmpty()) return@LaunchedEffect
+        while (true) {
+            val p = vm.player?.currentPosition ?: 0L
+            // 跳变（seek）时立刻同步，缓冲期间保持上一次值
+            if (p > 0) subtitlePosMs = p
+            delay(100)
+        }
+    }
+
+    // 拖动进度条 / 手势快进后，4.00 秒主时钟跳变时立刻把字幕时钟对齐
+    LaunchedEffect(positionMs) {
+        if (kotlin.math.abs(positionMs - subtitlePosMs) > 800) subtitlePosMs = positionMs
     }
 
     LaunchedEffect(vm.player) {
@@ -198,7 +228,10 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(vm.state.message) {
-        vm.state.message?.let { snackbar.showSnackbar(it) }
+        vm.state.message?.let {
+            snackbar.showSnackbar(it)
+            vm.clearToast()
+        }
     }
 
     DisposableEffect(view) {
@@ -285,6 +318,20 @@ fun PlayerScreen(
                     PlayerView(ctx).apply {
                         player = exo
                         useController = false
+                        subtitleView?.apply {
+                            visibility = android.view.View.VISIBLE
+                            setFractionalTextSize(0.055f)
+                            setStyle(
+                                androidx.media3.ui.CaptionStyleCompat(
+                                    android.graphics.Color.WHITE,
+                                    android.graphics.Color.parseColor("#B3000000"),
+                                    android.graphics.Color.TRANSPARENT,
+                                    androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                                    android.graphics.Color.BLACK,
+                                    null,
+                                ),
+                            )
+                        }
                         setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -295,6 +342,42 @@ fun PlayerScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+
+        // 自绘字幕：偏移即时生效，不重建播放器（不会黑屏）
+        // 控制条可见时字幕上移（在进度条上方），隐藏时贴底
+        val subtitleBottom by androidx.compose.animation.core.animateDpAsState(
+            targetValue = if (controlsVisible) 104.dp else 22.dp,
+            animationSpec = androidx.compose.animation.core.tween(180),
+            label = "subtitleBottom",
+        )
+        run {
+            val cues = vm.state.subtitleCues
+            if (cues.isNotEmpty()) {
+                val t = subtitlePosMs - vm.state.subtitleOffsetMs
+                val text = cues.firstOrNull { t >= it.startMs && t < it.endMs }?.text.orEmpty()
+                androidx.compose.runtime.LaunchedEffect(text) {
+                    if (text.isNotBlank()) android.util.Log.i("JavBossSub", "cue=" + text.replace("\n", " / "))
+                }
+                if (text.isNotBlank()) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = subtitleBottom, start = 32.dp, end = 32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text,
+                            color = Color.White,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+            }
         }
 
         Box(
@@ -449,6 +532,7 @@ fun PlayerScreen(
                         }
                         PlayerAction("截帧", Icons.Filled.PhotoCamera) { vm.captureFrame(context) }
                         PlayerAction("截图页", Icons.Filled.Collections) { onOpenScreenshots() }
+                        PlayerAction("字幕", Icons.Filled.Subtitles) { showSubtitle = true }
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                             PlayerAction("画中画", Icons.Filled.PictureInPictureAlt) {
                                 val activity = context as? android.app.Activity ?: return@PlayerAction
@@ -574,8 +658,64 @@ fun PlayerScreen(
             }
         }
 
+
+        if (showSubtitle) {
+            Box(Modifier.fillMaxSize()) {
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        ) { showSubtitle = false },
+                )
+                SubtitlePanel(
+                    code = vm.state.javCode,
+                    currentName = vm.state.subtitleName,
+                    currentOffsetMs = vm.state.subtitleOffsetMs,
+                    embeddedCount = vm.state.embeddedSubtitleCount,
+                    usingEmbedded = vm.state.usingEmbeddedSubtitle,
+                    skipped = skippedMarked,
+                    onDismiss = { showSubtitle = false },
+                    onShift = { delta -> vm.shiftSubtitleOffset(delta) },
+                    onResetOffset = { vm.resetSubtitleOffset() },
+                    onDetach = {
+                        scope.launch {
+                            AppGraph.subtitle.clear(vm.state.javCode)
+                            vm.detachSubtitle()
+                        }
+                    },
+                    onUseEmbedded = { vm.useEmbeddedSubtitle() },
+                    onToggleSkip = { skip ->
+                        scope.launch {
+                            AppGraph.settings.setSubtitleSkipped(vm.state.javCode, skip)
+                            if (skip) {
+                                AppGraph.subtitle.clear(vm.state.javCode)
+                                vm.detachSubtitle()
+                            }
+                        }
+                    },
+                    onOpenPicker = { showSubtitle = false; showPicker = true },
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+                )
+            }
+        }
+
+        if (showPicker) {
+            SubtitlePickerSheet(
+                code = vm.state.javCode,
+                activeName = vm.state.subtitleName,
+                onDismiss = { showPicker = false },
+                onLoaded = { inst ->
+                    vm.attachSubtitle(inst.name, java.io.File(inst.filePath), inst.offsetMs)
+                    vm.toast("字幕已加载：${inst.name}")
+                },
+            )
+        }
         SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
     }
+
 
     if (showQueue) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

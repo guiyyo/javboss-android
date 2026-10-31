@@ -40,6 +40,8 @@ object AppGraph {
         private set
     lateinit var lock: com.javboss.android.core.lock.AppLockManager
         private set
+    lateinit var subtitle: com.javboss.android.data.subtitle.SubtitleRepository
+        private set
 
     fun init(context: Context) {
         if (::appContext.isInitialized) return
@@ -56,5 +58,6 @@ object AppGraph {
         scrape = ScrapeRepository(settings)
         lock = com.javboss.android.core.lock.AppLockManager(appContext)
         lock.start()
+        subtitle = com.javboss.android.data.subtitle.SubtitleRepository(appContext, settings)
     }
 }

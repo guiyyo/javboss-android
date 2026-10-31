@@ -24,6 +24,8 @@ import com.javboss.android.data.model.TranslationBatchStatus
 import com.javboss.android.data.model.TranslationResult
 import com.javboss.android.data.model.Page
 import com.javboss.android.data.remote.JavBossApi
+import com.javboss.android.data.remote.JavTagCategoryAssignRequest
+import com.javboss.android.data.remote.TagIdsRequest
 import com.javboss.android.data.settings.SettingsStore
 import kotlinx.serialization.json.JsonElement
 
@@ -81,6 +83,43 @@ class JavRepository(private val settings: SettingsStore) {
     suspend fun tags(): ApiResult<List<JavTagCount>> = apiCall { api().javTags() }
 
     suspend fun tagCategories(): ApiResult<List<JavTagCategoryRef>> = apiCall { api().javTagCategories() }
+
+    /* ---------- JAV 标签管理 ---------- */
+
+    suspend fun createTag(name: String): ApiResult<Unit> = apiCall {
+        api().createJavTag(NameRequest(name))
+        Unit
+    }
+
+    suspend fun renameTag(id: Long, name: String): ApiResult<Unit> = apiCall {
+        api().renameJavTag(id, NameRequest(name))
+        Unit
+    }
+
+    suspend fun deleteTag(id: Long): ApiResult<Unit> = apiCall {
+        api().deleteJavTag(id)
+        Unit
+    }
+
+    suspend fun deleteTags(ids: List<Long>): ApiResult<Unit> = apiCall {
+        api().deleteJavTags(TagIdsRequest(ids))
+        Unit
+    }
+
+    suspend fun assignTagCategory(tagIds: List<Long>, categoryId: Long?): ApiResult<Unit> = apiCall {
+        api().assignJavTagCategory(JavTagCategoryAssignRequest(tagIds, categoryId))
+        Unit
+    }
+
+    suspend fun createTagCategory(name: String): ApiResult<Unit> = apiCall {
+        api().createJavTagCategory(NameRequest(name))
+        Unit
+    }
+
+    suspend fun deleteTagCategory(id: Long): ApiResult<Unit> = apiCall {
+        api().deleteJavTagCategory(id)
+        Unit
+    }
 
     suspend fun studios(offset: Int, search: String = "", limit: Int = 60): ApiResult<Page<JavStudioSummary>> =
         apiCall { api().javStudios(limit = limit, offset = offset, search = search.takeIf { it.isNotBlank() }) }

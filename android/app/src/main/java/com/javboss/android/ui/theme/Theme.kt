@@ -70,7 +70,9 @@ fun JavBossTheme(
         else -> LightColors
     }
     // 页面自适应：按屏宽放大字号（手机 1.0 / 小平板 1.15 / 平板+电视 1.3 / 超大屏 1.45）
-    val widthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    // 若用户强制了「界面模式」（手机/平板/电视），字号也跟随该模式，避免布局与字号不匹配
+    val widthDp = com.javboss.android.ui.common.LocalLayoutWidthOverride.current
+        ?: androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
     val scale = when {
         widthDp >= 1280 -> 1.5f
         widthDp >= 960 -> 1.35f

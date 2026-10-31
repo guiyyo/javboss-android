@@ -45,6 +45,16 @@ data class UiPrefs(
     val tvPinLength: Int = 0,
     /** TV 无操作自动锁屏时间（分钟，0 = 关闭） */
     val tvIdleLockMinutes: Int = 0,
+    /** 本地字幕文件夹（SAF tree uri，空 = 未选择） */
+    val subtitleFolder: String = "",
+    /** 在线字幕源地址（SubtitleCat 镜像可换） */
+    val subtitleCatBase: String = "https://subtitlecat.com",
+    /** 启动时自动检查 GitHub 更新 */
+    val autoCheckUpdate: Boolean = true,
+    /** 更新下载镜像（空 = GitHub 直连），如 https://ghfast.top/ */
+    val updateMirror: String = "",
+    /** 上次镜像测速时间（毫秒），用于节流 */
+    val updateMirrorLastTest: Long = 0L,
 )
 
 val LocalUiPrefs = staticCompositionLocalOf { UiPrefs() }
@@ -74,4 +84,10 @@ object UiPrefsKeys {
     val TV_PIN_HASH = stringPreferencesKey("ui_tv_pin_hash")
     val TV_PIN_LENGTH = intPreferencesKey("ui_tv_pin_length")
     val TV_IDLE_LOCK_MIN = intPreferencesKey("ui_tv_idle_lock_min")
+    val SUBTITLE_FOLDER = stringPreferencesKey("ui_subtitle_folder")
+    val SUBTITLE_CAT_BASE = stringPreferencesKey("ui_subtitle_cat_base")
+    val AUTO_CHECK_UPDATE = booleanPreferencesKey("ui_auto_check_update")
+    val UPDATE_SKIPPED_VERSION = stringPreferencesKey("ui_update_skipped_version")
+    val UPDATE_MIRROR = stringPreferencesKey("ui_update_mirror")
+    val UPDATE_MIRROR_LAST_TEST = androidx.datastore.preferences.core.longPreferencesKey("ui_update_mirror_last_test")
 }

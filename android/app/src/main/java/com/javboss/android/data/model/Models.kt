@@ -67,7 +67,8 @@ data class JavTagCount(
     val name: String = "",
     @SerialName("simplified_name") val simplifiedName: String = "",
     @SerialName("category_id") val categoryId: Long? = null,
-    val category: JavTagCategoryRef? = null,
+    /** 服务端返回分类名（字符串），不是对象 */
+    val category: String = "",
     val provider: Int = 0,
     val count: Long = 0,
 )
@@ -114,6 +115,9 @@ data class DirectoryRef(
 @Serializable
 data class LastScanSummary(
     @SerialName("files_seen") val filesSeen: Long = 0,
+    val inserted: Long = 0,
+    val updated: Long = 0,
+    val removed: Long = 0,
     @SerialName("duration_ms") val durationMs: Long = 0,
     @SerialName("finished_at_unix_ms") val finishedAtUnixMs: Long = 0,
 )

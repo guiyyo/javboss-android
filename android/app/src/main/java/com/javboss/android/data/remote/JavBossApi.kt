@@ -102,6 +102,12 @@ data class VideoTagAddRequest(
 )
 
 @Serializable
+data class JavTagCategoryAssignRequest(
+    @SerialName("tag_ids") val tagIds: List<Long>,
+    @SerialName("category_id") val categoryId: Long? = null,
+)
+
+@Serializable
 data class JavTagsAddRequest(
     @SerialName("tag_id") val tagId: Long,
     @SerialName("jav_ids") val javIds: List<Long>,
@@ -291,6 +297,29 @@ interface JavBossApi {
 
     @POST("jav/tags/add")
     suspend fun addJavTags(@Body body: JavTagsAddRequest)
+
+    /* ---------- JAV 标签管理（与网页一致：/jav/tags*） ---------- */
+
+    @POST("jav/tags")
+    suspend fun createJavTag(@Body body: NameRequest): JavTagCount
+
+    @PATCH("jav/tags/{id}")
+    suspend fun renameJavTag(@Path("id") id: Long, @Body body: NameRequest)
+
+    @DELETE("jav/tags/{id}")
+    suspend fun deleteJavTag(@Path("id") id: Long)
+
+    @POST("jav/tags/batch_delete")
+    suspend fun deleteJavTags(@Body body: TagIdsRequest)
+
+    @POST("jav/tags/category")
+    suspend fun assignJavTagCategory(@Body body: JavTagCategoryAssignRequest)
+
+    @POST("jav/tag-categories")
+    suspend fun createJavTagCategory(@Body body: NameRequest): JavTagCategoryRef
+
+    @DELETE("jav/tag-categories/{id}")
+    suspend fun deleteJavTagCategory(@Path("id") id: Long)
 
     @GET("jav/series")
     suspend fun javSeries(

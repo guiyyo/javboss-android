@@ -59,12 +59,19 @@ class DirectoryViewModel : ViewModel() {
         private set
     var message by mutableStateOf<String?>(null)
         private set
+    /** 正在扫描的秒数（0 = 无扫描任务） */
+    var scanElapsed by mutableStateOf(0)
+        private set
 
-    fun load() {
-        loading = true
+    fun load(showLoading: Boolean = true) {
+        if (showLoading) loading = true
         viewModelScope.launch {
             when (val result = AppGraph.config.directories()) {
-                is ApiResult.Success -> { items = result.data; error = null }
+                is ApiResult.Success -> {
+                    // 服务端软删除（is_delete=true）的记录仍会返回，必须过滤
+                    items = result.data.filter { !it.isDelete }
+                    error = null
+                }
                 is ApiResult.Failure -> error = result.message
             }
             loading = false
@@ -77,19 +84,61 @@ class DirectoryViewModel : ViewModel() {
                 "enabled" to JsonPrimitive(enabled),
             )
             when (val result = AppGraph.server.updateDirectory(dir.id, body)) {
-                is ApiResult.Success -> load()
+                is ApiResult.Success -> load(false)
                 is ApiResult.Failure -> message = result.message
             }
         }
     }
 
+    /** 软删除目录（PATCH is_delete=true），随后从列表移除 */
+    fun delete(dir: DirectoryRef) {
+        viewModelScope.launch {
+            val body = mapOf<String, kotlinx.serialization.json.JsonElement>(
+                "is_delete" to JsonPrimitive(true),
+            )
+            when (val result = AppGraph.server.updateDirectory(dir.id, body)) {
+                is ApiResult.Success -> { message = "已删除目录：${dir.path}"; load(false) }
+                is ApiResult.Failure -> message = "删除失败：${result.message}"
+            }
+        }
+    }
+
+    /** 触发扫描，然后轮询 work_status 直到结束（最多 5 分钟） */
     fun scan(dir: DirectoryRef) {
         viewModelScope.launch {
             when (val result = AppGraph.server.scanDirectory(dir.id)) {
-                is ApiResult.Success -> { message = "已触发扫描：${dir.path}"; load() }
-                is ApiResult.Failure -> message = result.message
+                is ApiResult.Success -> {
+                    message = "已开始扫描：${dir.path}"
+                    scanElapsed = 0
+                    pollScan()
+                }
+                is ApiResult.Failure -> message = "触发失败：${result.message}"
             }
         }
+    }
+
+    private suspend fun pollScan() {
+        var seconds = 0
+        while (seconds < 300) {
+            kotlinx.coroutines.delay(1500)
+            seconds += 2
+            scanElapsed = seconds
+            val r = AppGraph.config.directories()
+            if (r is ApiResult.Success) {
+                items = r.data.filter { !it.isDelete }
+                val scanning = items.any { it.isScanning || it.workStatus == "scanning" }
+                if (!scanning) {
+                    val summary = items.firstOrNull()?.lastScanSummary
+                    message = summary?.let {
+                        "扫描完成：发现 ${it.filesSeen} 个文件，新增 ${it.inserted}，更新 ${it.updated}，移除 ${it.removed}（${it.durationMs / 1000}s）"
+                    } ?: "扫描完成"
+                    scanElapsed = 0
+                    return
+                }
+            }
+        }
+        scanElapsed = 0
+        message = "扫描超时，请下拉刷新查看结果"
     }
 }
 
@@ -124,7 +173,9 @@ fun DirectoryScreen(onBack: () -> Unit, vm: DirectoryViewModel = viewModel()) {
                                 )
                                 Text(
                                     "已扫描 ${dir.scannedVideoCount} · 已刮削 ${dir.scrapedVideoCount}" +
-                                        if (dir.missing) " · 目录不可达" else "",
+                                        (if (dir.missing) " · 目录不可达" else "") +
+                                        (if (!dir.enabled) " · 已停用" else "") +
+                                        (dir.workStatus.takeIf { it.isNotBlank() && it != "idle" }?.let { " · $it" } ?: ""),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -141,8 +192,19 @@ fun DirectoryScreen(onBack: () -> Unit, vm: DirectoryViewModel = viewModel()) {
                                             modifier = Modifier.padding(start = 6.dp),
                                         )
                                     }
-                                    TextButton(onClick = { vm.scan(dir) }) {
-                                        Text(if (dir.isScanning) "扫描中…" else "扫描")
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (vm.scanElapsed > 0 || dir.isScanning) {
+                                            Text(
+                                                vm.scanElapsed.takeIf { it > 0 }?.let { "扫描中 ${it}s" } ?: "扫描中…",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(end = 6.dp),
+                                            )
+                                        }
+                                        TextButton(onClick = { vm.scan(dir) }) { Text("扫描") }
+                                        TextButton(onClick = { vm.delete(dir) }) {
+                                            Text("删除", color = MaterialTheme.colorScheme.error)
+                                        }
                                     }
                                 }
                             }
@@ -411,6 +473,93 @@ private fun InfoCard(title: String, rows: List<Pair<String, String>>) {
                 ) {
                     Text(k, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(v, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+/* ================================================================ 服务器配置（只读对照） */
+
+class ServerConfigViewModel : ViewModel() {
+    var values by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    var loading by mutableStateOf(true)
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+
+    fun load() {
+        loading = true
+        viewModelScope.launch {
+            when (val r = AppGraph.config.refresh()) {
+                is ApiResult.Success -> { values = r.data; error = null }
+                is ApiResult.Failure -> error = r.message
+            }
+            loading = false
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ServerConfigScreen(onBack: () -> Unit, vm: ServerConfigViewModel = viewModel()) {
+    LaunchedEffect(Unit) { vm.load() }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("服务器配置（${vm.values.size} 项）") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                },
+                actions = { TextButton(onClick = { vm.load() }) { Text("重新同步") } },
+            )
+        },
+    ) { inner ->
+        Column(Modifier.fillMaxSize().padding(inner)) {
+            when {
+                vm.loading -> LoadingBox(Modifier.fillMaxSize())
+                vm.error != null -> ErrorBox(vm.error!!, onRetry = vm::load, modifier = Modifier.fillMaxSize())
+                else -> {
+                    val groups = vm.values.keys
+                        .groupBy { key ->
+                            when {
+                                key.startsWith("jav_title_translation") -> "AI 标题翻译"
+                                key.startsWith("jav_series_translation") -> "AI 系列翻译"
+                                key.startsWith("jav_") -> "JAV 库"
+                                key.startsWith("video_") -> "视频库"
+                                key.startsWith("idol_") -> "女优"
+                                key.startsWith("series_") -> "系列"
+                                key.startsWith("studio_") -> "片商"
+                                else -> "其它"
+                            }
+                        }
+                        .toSortedMap()
+                    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+                        item {
+                            Text(
+                                "只读对照：这些值直接来自服务端 GET /config（单位与网页一致），修改请用网页端。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
+                        groups.forEach { (group, keys) ->
+                            item { Text(group + "（" + keys.size + "）", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)) }
+                            items(keys.sorted()) { key ->
+                                Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                                    Column(Modifier.padding(10.dp)) {
+                                        Text(key, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                        Text(
+                                            vm.values[key].orEmpty().take(400),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

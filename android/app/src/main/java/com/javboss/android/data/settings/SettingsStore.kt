@@ -94,6 +94,11 @@ class SettingsStore(private val context: Context) {
             tvPinHash = p[UiPrefsKeys.TV_PIN_HASH] ?: "",
             tvPinLength = p[UiPrefsKeys.TV_PIN_LENGTH] ?: 0,
             tvIdleLockMinutes = p[UiPrefsKeys.TV_IDLE_LOCK_MIN] ?: 0,
+            subtitleFolder = p[UiPrefsKeys.SUBTITLE_FOLDER] ?: "",
+            subtitleCatBase = p[UiPrefsKeys.SUBTITLE_CAT_BASE] ?: "https://subtitlecat.com",
+            autoCheckUpdate = p[UiPrefsKeys.AUTO_CHECK_UPDATE] ?: true,
+            updateMirror = p[UiPrefsKeys.UPDATE_MIRROR] ?: "",
+            updateMirrorLastTest = p[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] ?: 0L,
         )
     }
 
@@ -118,8 +123,56 @@ class SettingsStore(private val context: Context) {
     suspend fun setTvColumns(value: Int) =
         context.dataStore.edit { it[UiPrefsKeys.TV_COLUMNS] = value.toString() }
 
+    suspend fun setSubtitleFolder(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_FOLDER] = value }
+
+    suspend fun setUpdateMirrorLastTest(value: Long) =
+        context.dataStore.edit { it[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] = value }
+
+    suspend fun setUpdateMirror(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.UPDATE_MIRROR] = value }
+
+    suspend fun setAutoCheckUpdate(value: Boolean) =
+        context.dataStore.edit { it[UiPrefsKeys.AUTO_CHECK_UPDATE] = value }
+
+    suspend fun updateSkippedVersion(): String? =
+        context.dataStore.data.first()[UiPrefsKeys.UPDATE_SKIPPED_VERSION]
+
+    suspend fun setUpdateSkippedVersion(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.UPDATE_SKIPPED_VERSION] = value }
+
+    suspend fun setSubtitleCatBase(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_CAT_BASE] = value }
+
+    /* ---------------- 每部作品的字幕选择（按番号记忆） ---------------- */
+
+    private fun subSelKey(code: String) = stringPreferencesKey("sub_sel_" + code.filter { it.isLetterOrDigit() }.uppercase())
+    private fun subOffKey(code: String) = androidx.datastore.preferences.core.longPreferencesKey("sub_off_" + code.filter { it.isLetterOrDigit() }.uppercase())
+
+    suspend fun subtitleSelection(code: String): String? =
+        context.dataStore.data.first()[subSelKey(code)]?.takeIf { it.isNotBlank() }
+
+    suspend fun subtitleOffset(code: String): Long =
+        context.dataStore.data.first()[subOffKey(code)] ?: 0L
+
+    suspend fun setSubtitleSelection(code: String, name: String, offsetMs: Long) =
+        context.dataStore.edit {
+            it[subSelKey(code)] = name
+            it[subOffKey(code)] = offsetMs
+        }
+
     suspend fun setTvIdleLockMinutes(value: Int) =
         context.dataStore.edit { it[UiPrefsKeys.TV_IDLE_LOCK_MIN] = value }
+
+    /** 本片是否标记为「无需字幕」（硬字幕/自带） */
+    private fun subSkipKey(code: String) =
+        androidx.datastore.preferences.core.booleanPreferencesKey("sub_skip_" + code.filter { it.isLetterOrDigit() }.uppercase())
+
+    suspend fun subtitleSkipped(code: String): Boolean =
+        context.dataStore.data.first()[subSkipKey(code)] ?: false
+
+    suspend fun setSubtitleSkipped(code: String, value: Boolean) =
+        context.dataStore.edit { it[subSkipKey(code)] = value }
 
     suspend fun setTvPinEnabled(value: Boolean) =
         context.dataStore.edit { it[UiPrefsKeys.TV_PIN_ENABLED] = value }
