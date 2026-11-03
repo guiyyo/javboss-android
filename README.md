@@ -4,10 +4,23 @@
 
 <p align="center">
   <a href="../../releases"><img alt="Release" src="https://img.shields.io/github/v/release/guiyyo/javboss-android?display_name=tag"></a>
+  <a href="../../releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/guiyyo/javboss-android/total?color=2ea44f"></a>
   <a href="../../stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/guiyyo/javboss-android?style=social"></a>
+  <a href="../../issues"><img alt="Issues" src="https://img.shields.io/github/issues/guiyyo/javboss-android"></a>
+  <a href="../../commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/guiyyo/javboss-android"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/guiyyo/javboss-android"></a>
+</p>
+
+<p align="center">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Android%20%7C%20Android%20TV-3DDC84?logo=android&logoColor=white">
-  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white">
   <img alt="Android" src="https://img.shields.io/badge/Android-5.1%20~%2016-1E88E5">
+  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white">
+  <img alt="Compose" src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose&logoColor=white">
+  <img alt="Player" src="https://img.shields.io/badge/Player-Media3%20%7C%20ExoPlayer-FF6F00">
+</p>
+
+<p align="center">
+  <b>三端自适应</b> · 手机 / 平板 / Android TV　|　<b>遥控器焦点导航</b> · 焦点记忆与分层返回　|　<b>字幕</b> · 多源搜索 / 偏移微调 / 代理加速　|　<b>应用内更新</b> · 检查 · 下载 · 安装
 </p>
 
 ## 这是什么
