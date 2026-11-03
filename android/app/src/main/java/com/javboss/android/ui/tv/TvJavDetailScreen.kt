@@ -48,7 +48,7 @@ import com.javboss.android.ui.common.formatMinutesHm
 fun TvJavDetailScreen(
     javId: Long,
     onBack: () -> Unit,
-    onPlayVideo: (Long, Long, String) -> Unit,
+    onPlayVideo: (Long, Long, String, String) -> Unit,
     onOpenIdolWorks: (Long, String) -> Unit,
     onOpenFiltered: (String, JavQuery) -> Unit,
 ) {
@@ -211,7 +211,7 @@ fun TvJavDetailScreen(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 detail.videos.forEachIndexed { index, video ->
                     TvFocusable(onClick = {
-                        onPlayVideo(video.id, video.locationId, title)
+                        onPlayVideo(video.id, video.locationId, title, detail.code)
                     }, modifier = Modifier.fillMaxWidth().then(
                         if (index == 0) Modifier.focusRequester(firstVideoFocus) else Modifier,
                     ).then(rememberTvFocusModifier("ep-${video.id}-${video.locationId}", requesterFor))) {

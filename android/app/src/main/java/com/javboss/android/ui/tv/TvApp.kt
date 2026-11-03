@@ -98,7 +98,13 @@ sealed interface TvScreen {
     data object Prefixes : TvScreen
     data class FilteredJav(val title: String, val query: JavQuery) : TvScreen
     data class Detail(val javId: Long) : TvScreen
-    data class Player(val videoId: Long, val locationId: Long, val title: String, val javId: Long) : TvScreen
+    data class Player(
+        val videoId: Long,
+        val locationId: Long,
+        val title: String,
+        val javId: Long,
+        val javCode: String = "",
+    ) : TvScreen
 }
 
 private enum class TvTab(val label: String) {
@@ -422,8 +428,8 @@ private fun TvContent(onLogout: () -> Unit) {
                 is TvScreen.Detail -> TvJavDetailScreen(
                     javId = current.javId,
                     onBack = { if (stack.size > 1) stack.removeAt(stack.lastIndex) },
-                    onPlayVideo = { videoId, locationId, title ->
-                        push(TvScreen.Player(videoId, locationId, title, current.javId))
+                    onPlayVideo = { videoId, locationId, title, code ->
+                        push(TvScreen.Player(videoId, locationId, title, current.javId, code))
                     },
                     onOpenIdolWorks = { id, name ->
                         push(
@@ -878,6 +884,9 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
     var tvUpdateMsg by remember { mutableStateOf<String?>(null) }
     var tvSpeedTesting by remember { mutableStateOf(false) }
     var tvSpeedMsg by remember { mutableStateOf<String?>(null) }
+    // 字幕代理弹窗（TV 端统一入口）
+    var tvProxyDialogOpen by remember { mutableStateOf(false) }
+
     var pinConfirm by remember { mutableStateOf("") }
     var crashText by remember { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -935,6 +944,30 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(horizontal = 22.dp, vertical = 16.dp),
                 )
+            }
+        }
+        item { TvSectionHeader("字幕") }
+        item {
+            TvSettingRow(
+                "字幕代理",
+                buildString {
+                    val rev = prefs.subtitleProxyHost
+                    val net = prefs.netProxyHost
+                    if (rev.isBlank() && net.isBlank()) append("未设置（直连）")
+                    if (rev.isNotBlank()) {
+                        append(if (prefs.subtitleProxyHttps) "https" else "http")
+                        append("://").append(rev).append(":").append(prefs.subtitleProxyPort)
+                    }
+                    if (net.isNotBlank()) {
+                        if (isNotEmpty()) append(" · ")
+                        append(prefs.netProxyType.uppercase()).append("://").append(net).append(":").append(prefs.netProxyPort)
+                    }
+                },
+            ) { tvProxyDialogOpen = true }
+        }
+        item {
+            TvSettingRow("仅中文字幕", if (prefs.subtitleChineseOnly) "开" else "关") {
+                scope.launch { AppGraph.settings.setSubtitleChineseOnly(!prefs.subtitleChineseOnly) }
             }
         }
         item { TvSectionHeader("更新") }
@@ -1202,6 +1235,31 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                             }
                         }
                     }
+                },
+            )
+        }
+        if (tvProxyDialogOpen) {
+            TvSubtitleProxyDialog(
+                netEnabled0 = prefs.netProxyHost.isNotBlank(),
+                netHost0 = prefs.netProxyHost.ifBlank { "192.168.1.1" },
+                netPort0 = prefs.netProxyPort.toString(),
+                netSocks0 = prefs.netProxyType.equals("socks", true),
+                revEnabled0 = prefs.subtitleProxyHost.isNotBlank(),
+                revHost0 = prefs.subtitleProxyHost.ifBlank { "192.168.1.1" },
+                revPort0 = prefs.subtitleProxyPort.toString(),
+                revHttps0 = prefs.subtitleProxyHttps,
+                onDismiss = { tvProxyDialogOpen = false },
+                onSave = { ne, nh, np, ns, re, rh, rp, rh2 ->
+                    scope.launch {
+                        AppGraph.settings.setNetProxyHost(if (ne) nh.trim() else "")
+                        AppGraph.settings.setNetProxyPort(np.toIntOrNull() ?: 7890)
+                        AppGraph.settings.setNetProxyType(if (ns) "socks" else "http")
+                        AppGraph.settings.setSubtitleProxyHost(if (re) rh.trim() else "")
+                        AppGraph.settings.setSubtitleProxyPort(rp.toIntOrNull() ?: 8899)
+                        AppGraph.settings.setSubtitleProxyHttps(rh2)
+                        message = "字幕代理已保存"
+                    }
+                    tvProxyDialogOpen = false
                 },
             )
         }
@@ -1474,4 +1532,155 @@ private fun TvSectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
     )
+}
+
+/**
+ * 电视端「字幕代理」弹窗：网络代理 + 字幕源反代 合并为一个弹窗，
+ * 各带开关、预填 192.168.1.1、简洁示例，底部「保存 / 取消」。
+ */
+@Composable
+private fun TvSubtitleProxyDialog(
+    netEnabled0: Boolean,
+    netHost0: String,
+    netPort0: String,
+    netSocks0: Boolean,
+    revEnabled0: Boolean,
+    revHost0: String,
+    revPort0: String,
+    revHttps0: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (Boolean, String, String, Boolean, Boolean, String, String, Boolean) -> Unit,
+) {
+    var netEnabled by remember { mutableStateOf(netEnabled0) }
+    var netHost by remember { mutableStateOf(netHost0.ifBlank { "192.168.1.1" }) }
+    var netPort by remember { mutableStateOf(netPort0.ifBlank { "7890" }) }
+    var netSocks by remember { mutableStateOf(netSocks0) }
+
+    var revEnabled by remember { mutableStateOf(revEnabled0) }
+    var revHost by remember { mutableStateOf(revHost0.ifBlank { "192.168.1.1" }) }
+    var revPort by remember { mutableStateOf(revPort0.ifBlank { "8899" }) }
+    var revHttps by remember { mutableStateOf(revHttps0) }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            // 不随软键盘缩放窗口，避免弹窗上下抖动
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.ui.graphics.RectangleShape,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier
+                .padding(vertical = 12.dp)
+                .fillMaxWidth(0.86f)
+                // 1080p 电视 @320dpi 只有 540dp 高：限制高度 + 内部滚动，保证按钮始终可见
+                .heightIn(max = 470.dp),
+        ) {
+            Column(
+                Modifier
+                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("字幕代理", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
+                        Text("关闭", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                    }
+                }
+                Text(
+                    "字幕站点较慢或访问不了时用。两个代理可单独开关，都关 = 直连；访问自家服务器不受影响。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                // ---------- 网络代理 ----------
+                TvSettingRow("网络代理", if (netEnabled) "已启用" else "已关闭") {
+                    netEnabled = !netEnabled
+                }
+                if (netEnabled) {
+                    TvInputField(
+                        value = netHost,
+                        onValueChange = { netHost = it },
+                        placeholder = "192.168.1.1",
+                        label = "代理 IP / 主机",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TvInputField(
+                        value = netPort,
+                        onValueChange = { netPort = it.filter { c -> c.isDigit() }.take(5) },
+                        placeholder = "7890",
+                        label = "代理端口",
+                        digitsOnly = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TvSettingRow("代理类型", if (netSocks) "SOCKS5" else "HTTP") { netSocks = !netSocks }
+                    Text(
+                        "示例：Clash/v2ray 的混合端口常为 7890 → 填 192.168.1.1 + 7890 + HTTP",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // ---------- 字幕源反代 ----------
+                TvSettingRow("字幕源反代", if (revEnabled) "已启用" else "已关闭") {
+                    revEnabled = !revEnabled
+                }
+                if (revEnabled) {
+                    TvInputField(
+                        value = revHost,
+                        onValueChange = { revHost = it },
+                        placeholder = "192.168.1.1",
+                        label = "反代 IP / 主机",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TvInputField(
+                        value = revPort,
+                        onValueChange = { revPort = it.filter { c -> c.isDigit() }.take(5) },
+                        placeholder = "8899",
+                        label = "反代端口",
+                        digitsOnly = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TvSettingRow("反代协议", if (revHttps) "HTTPS" else "HTTP") { revHttps = !revHttps }
+                    Text(
+                        "示例：" + (if (revHttps) "https" else "http") +
+                            "://" + revHost.ifBlank { "192.168.1.1" } + ":" + revPort.ifBlank { "8899" } + "/?u={url}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f))
+                    TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
+                        Text("取消", modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+                    }
+                    TvFocusable(
+                        onClick = {
+                            onSave(
+                                netEnabled, netHost, netPort, netSocks,
+                                revEnabled, revHost, revPort, revHttps,
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text(
+                            "保存",
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

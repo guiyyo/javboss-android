@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -88,6 +89,9 @@ fun TvSubtitleSearchDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<SubtitleCandidate>>(emptyList()) }
     var installed by remember { mutableStateOf<InstalledSubtitle?>(null) }
+    var resultBanner by remember { mutableStateOf<String?>(null) }
+    // 仓库级安装任务：即使弹窗重建也不会丢进度/结果
+    val installState by AppGraph.subtitle.installState.collectAsState()
     var attemptInfo by remember { mutableStateOf<String?>(null) }
     var elapsedSec by remember { mutableStateOf(0) }
 
@@ -132,27 +136,58 @@ fun TvSubtitleSearchDialog(
         progress = null
         error = null
         status = "下载中…"
-        scope.launch {
-            AppGraph.subtitle.install(code, c) { p -> progress = p }
-                .onSuccess { inst ->
+        // 交给仓库的 IO 作用域执行：弹窗关掉/重组也不会中断，状态保存在 installState
+        AppGraph.subtitle.installAsync(code, c)
+    }
+
+    // 把仓库级任务状态映射到界面（进度 / 结果 / 失败原因都会显示）
+    LaunchedEffect(installState) {
+        val st = installState ?: return@LaunchedEffect
+        if (st.code != code) return@LaunchedEffect
+        if (!st.done) {
+            loadingId = st.candidateId
+            progress = st.progress
+            status = st.stage
+            error = null
+            resultBanner = null
+        } else {
+            loadingId = null
+            progress = null
+            if (st.error != null) {
+                resultBanner = "✖ 加载失败"
+                error = st.error
+                status = null
+                android.util.Log.w("JavBossSub", "UI shows failure: ${st.error}")
+            } else {
+                resultBanner = "✔ 已加载：${st.title}"
+                status = "已应用到当前作品，播放时会自动显示"
+                error = null
+                st.installed?.let { inst ->
                     installed = inst
-                    status = "✔ 已下载：${inst.name}"
                     onLoaded(inst)
-                    delay(500)
-                    loadingId = null
-                    progress = null
                 }
-                .onFailure {
-                    error = "加载失败：${it.message}"
-                    status = null
-                    loadingId = null
-                }
+            }
         }
     }
 
     LaunchedEffect(Unit) {
         installed = AppGraph.subtitle.current(code)
-        search()
+        // 先展示上次的搜索结果，避免每次都要重新等 15s×N
+        installState?.takeIf { it.code == code && it.done }?.let { st ->
+            if (st.error != null) {
+                resultBanner = "✖ 上次加载失败"
+                error = st.error
+            } else {
+                resultBanner = "✔ 已加载：${st.title}"
+            }
+        }
+        val cached = AppGraph.subtitle.cachedSearch(code)
+        if (cached.isNotEmpty()) {
+            results = cached
+            status = "上次搜到 ${cached.size} 条（点「重新搜索」可刷新）"
+        } else {
+            search()
+        }
     }
 
     TvDialogFrame(onDismiss = onClose) {
@@ -201,13 +236,32 @@ fun TvSubtitleSearchDialog(
             }
         }
 
+        // 结果横幅：成功/失败都必须明确显示，且不清空
+        resultBanner?.let { b ->
+            Text(
+                b,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (b.startsWith("✔")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            )
+        }
         Text(
             "已下载：${installed?.name ?: (currentName ?: "无")}",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // 明显状态提示：正在尝试的源 + 已用时
+        // 明显状态提示：正在尝试的源 + 已用时（安装时也计时）
+        LaunchedEffect(loadingId) {
+            if (loadingId == null) return@LaunchedEffect
+            while (true) { delay(1000); elapsedSec += 1 }
+        }
+        if (loadingId != null) {
+            Text(
+                "正在解析 / 下载字幕（已用 ${elapsedSec}s，源站较慢时可能需 30~60 秒）",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         if (searching) {
             Text(
                 "🔍 正在搜索字幕（${elapsedSec}s）" + (attemptInfo?.let { " · $it" } ?: ""),
@@ -215,7 +269,7 @@ fun TvSubtitleSearchDialog(
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                "网络较慢时会逐个源尝试，个个源最多 7 秒；全部失败后可重试",
+                "网络较慢时会逐个源尝试，单个源最多 28 秒；全部失败后可重试",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

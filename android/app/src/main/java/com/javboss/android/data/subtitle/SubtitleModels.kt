@@ -58,3 +58,27 @@ fun parseSrtCues(srt: String): List<SubtitleCue> {
     }
     return cues
 }
+
+/** 是否是中文字幕候选（按语言标签 + 标题启发式判断）。 */
+fun isChineseSubtitle(c: SubtitleCandidate): Boolean {
+    val lang = c.language
+    if (lang.contains("中文")) return true
+    val t = (c.title + " " + (c.detailUrl ?: "")).lowercase()
+    return t.contains("zh-cn") || t.contains("zh-tw") || t.contains("zh-hans") ||
+        t.contains("-zh") || t.contains("繁中") || t.contains("简体") || t.contains("繁体") ||
+        t.contains("chs") || t.contains("cht") || t.contains("chinese")
+}
+
+/** 中文优先排序：中文在前，且简中优先。 */
+fun List<SubtitleCandidate>.sortedChineseFirst(): List<SubtitleCandidate> {
+    val rank = { c: SubtitleCandidate ->
+        val l = c.language
+        when {
+            l.contains("简") -> 0
+            l.contains("繁") -> 1
+            l.contains("中文") -> 2
+            else -> 3
+        }
+    }
+    return sortedWith(compareBy(rank))
+}

@@ -419,11 +419,35 @@ fun TvInputField(
     }
 
     if (editing) {
+        // 用 TextFieldValue 控制光标：进入编辑时放到末尾（原来落在开头，且遥控器移不动光标）
+        var fieldValue by remember {
+            androidx.compose.runtime.mutableStateOf(
+                androidx.compose.ui.text.input.TextFieldValue(
+                    text = value,
+                    selection = androidx.compose.ui.text.TextRange(value.length),
+                ),
+            )
+        }
+        androidx.compose.runtime.LaunchedEffect(editing, value) {
+            if (value != fieldValue.text) {
+                fieldValue = androidx.compose.ui.text.input.TextFieldValue(
+                    text = value,
+                    selection = androidx.compose.ui.text.TextRange(value.length),
+                )
+            }
+        }
         OutlinedTextField(
-            value = value,
+            value = fieldValue,
             onValueChange = { input ->
-                val filtered = if (digitsOnly) input.filter { it.isDigit() } else input
-                onValueChange(filtered.take(maxLength))
+                val filtered = if (digitsOnly) input.text.filter { it.isDigit() } else input.text
+                val text = filtered.take(maxLength)
+                fieldValue = input.copy(
+                    text = text,
+                    selection = androidx.compose.ui.text.TextRange(
+                        if (input.selection.start > text.length) text.length else input.selection.start,
+                    ),
+                )
+                onValueChange(text)
             },
             label = label?.let { { Text(it, style = MaterialTheme.typography.bodySmall) } },
             placeholder = { Text(placeholder, style = MaterialTheme.typography.bodySmall) },
@@ -443,13 +467,21 @@ fun TvInputField(
                     val digit = keyToChar(e.key)
                     when {
                         digit != null -> {
-                            if (digitsOnly || true) {
-                                onValueChange((value + digit).take(maxLength))
-                            }
+                            val next = (fieldValue.text + digit).take(maxLength)
+                            fieldValue = androidx.compose.ui.text.input.TextFieldValue(
+                                text = next,
+                                selection = androidx.compose.ui.text.TextRange(next.length),
+                            )
+                            onValueChange(next)
                             true
                         }
                         e.key == androidx.compose.ui.input.key.Key.Backspace -> {
-                            onValueChange(value.dropLast(1))
+                            val next = fieldValue.text.dropLast(1)
+                            fieldValue = androidx.compose.ui.text.input.TextFieldValue(
+                                text = next,
+                                selection = androidx.compose.ui.text.TextRange(next.length),
+                            )
+                            onValueChange(next)
                             true
                         }
                         e.key == androidx.compose.ui.input.key.Key.Back -> {

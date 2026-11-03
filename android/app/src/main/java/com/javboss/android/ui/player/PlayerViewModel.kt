@@ -281,6 +281,7 @@ class PlayerViewModel : ViewModel() {
 
         tickerJob = viewModelScope.launch {
             var lastPosition = player?.currentPosition ?: 0L
+            var lastHistorySave = 0L
             while (isActive) {
                 delay(500)
                 val exo = player ?: break
@@ -291,7 +292,12 @@ class PlayerViewModel : ViewModel() {
                 }
                 lastPosition = position
                 if (accumulatedMs - acknowledgedMs >= 10_000) {
+                    // 只上报进度（网络），本地观看记录的写盘拆到 60s 一次：
+                    // 原来每 10s 写一次「整份历史 JSON」会造成周期性掉帧
                     flush(final = false)
+                }
+                if (accumulatedMs - lastHistorySave >= 60_000) {
+                    lastHistorySave = accumulatedMs
                     saveHistory(exo)
                 }
             }

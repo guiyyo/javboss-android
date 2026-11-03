@@ -93,6 +93,8 @@ object SubtitleCodec {
         val sb = StringBuilder()
         var index = 1
         var inEvents = false
+        // ASS 允许自定义 Format，这里按 Format 行定位字段，缺省用标准 10 字段
+        var fields = listOf("layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text")
         for (line in ass.replace("\r\n", "\n").split("\n")) {
             val trimmed = line.trim()
             if (trimmed.startsWith("[")) {
@@ -100,16 +102,26 @@ object SubtitleCodec {
                 continue
             }
             if (!inEvents) continue
-            if (trimmed.startsWith("Format:", ignoreCase = true)) continue
+            if (trimmed.startsWith("Format:", ignoreCase = true)) {
+                fields = trimmed.substringAfter(':').split(',').map { it.trim().lowercase() }
+                continue
+            }
             if (!trimmed.startsWith("Dialogue:", ignoreCase = true)) continue
 
             val body = trimmed.substringAfter(':').trim()
             val parts = body.split(',')
-            if (parts.size < 10) continue
-            val start = parseAssTime(parts[1])
-            val end = parseAssTime(parts[2])
+            if (parts.size < 3) continue
+            val startIdx = fields.indexOf("start").takeIf { it >= 0 } ?: 1
+            val endIdx = fields.indexOf("end").takeIf { it >= 0 } ?: 2
+            val textIdx = fields.indexOf("text").takeIf { it >= 0 } ?: parts.lastIndex
+            if (parts.size <= maxOf(startIdx, endIdx)) continue
+            val start = parseAssTime(parts[startIdx])
+            val end = parseAssTime(parts[endIdx])
             if (start < 0 || end <= start) continue
-            val raw = parts.drop(9).joinToString(",").replace("\\N", "\n").replace("\\n", "\n")
+            val raw = parts.drop(textIdx.coerceAtMost(parts.size - 1))
+                .joinToString(",")
+                .replace("\\N", "\n")
+                .replace("\\n", "\n")
             val content = stripMarkup(raw).trim()
             if (content.isBlank()) continue
             sb.append(index++).append(LF)
@@ -170,10 +182,23 @@ object SubtitleCodec {
     }
 
     private fun normalizeSrt(srt: String): String {
-        var out = srt.replace("\r\n", "\n").replace("\r", "\n").replace("\u0000", "")
+        val cleaned = srt.replace("\r\n", "\n").replace("\r", "\n").replace("\u0000", "")
+            .split("\n")
+            .joinToString("\n") { line ->
+                val t = line.trim()
+                when {
+                    t.isEmpty() -> line
+                    t.contains("-->") -> line
+                    t.all { it.isDigit() } -> line
+                    // 正文行去掉 <i>、{\an8} 等标记（自绘字幕会原样显示）
+                    else -> stripMarkup(line)
+                }
+            }
+        var out = cleaned
         while (out.contains("\n\n\n")) out = out.replace("\n\n\n", "\n\n")
-        return out.trim() + LF
+        return out.trim() + "\n"
     }
+
 
     /* ------------------------------------------------------------ 偏移 */
 

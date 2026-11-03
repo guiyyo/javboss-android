@@ -60,6 +60,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -180,7 +181,7 @@ fun PlayerScreen(
             val p = vm.player?.currentPosition ?: 0L
             // 跳变（seek）时立刻同步，缓冲期间保持上一次值
             if (p > 0) subtitlePosMs = p
-            delay(100)
+            delay(300)
         }
     }
 
@@ -189,7 +190,14 @@ fun PlayerScreen(
         if (kotlin.math.abs(positionMs - subtitlePosMs) > 800) subtitlePosMs = positionMs
     }
 
-    LaunchedEffect(vm.player) {
+    // 注意：TextureView 下视频与控件共用窗口缓冲，**每秒刷新进度 state 会挤掉视频帧**。
+    // 所以只在控制条可见时刷新；隐藏时完全不写 state（播放本身由 ExoPlayer 自己渲染）。
+    LaunchedEffect(vm.player, controlsVisible) {
+        vm.player?.let { exo ->
+            val d = exo.duration
+            if (d > 0) durationMs = d
+        }
+        if (!controlsVisible) return@LaunchedEffect
         while (true) {
             vm.player?.let { exo ->
                 positionMs = exo.currentPosition.coerceAtLeast(0)
@@ -197,7 +205,7 @@ fun PlayerScreen(
                 durationMs = if (d > 0) d else 0
                 isPlaying = exo.isPlaying
             }
-            delay(400)
+            delay(1000)
         }
     }
 
@@ -310,36 +318,27 @@ fun PlayerScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+    // 渲染方式：默认 SurfaceView（性能好），SurfaceView 上黑屏/看不到控件时可在设置里切成 TextureView
+    val uiPrefs by com.javboss.android.di.AppGraph.settings.uiPrefs.collectAsState(
+        initial = com.javboss.android.data.settings.UiPrefs(),
+    )
+    val useSurfaceView = uiPrefs.playerSurfaceView
+
+    Box(modifier = modifier.fillMaxSize()) {
         val exo = vm.player
         if (exo != null) {
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        player = exo
-                        useController = false
-                        subtitleView?.apply {
-                            visibility = android.view.View.VISIBLE
-                            setFractionalTextSize(0.055f)
-                            setStyle(
-                                androidx.media3.ui.CaptionStyleCompat(
-                                    android.graphics.Color.WHITE,
-                                    android.graphics.Color.parseColor("#B3000000"),
-                                    android.graphics.Color.TRANSPARENT,
-                                    androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                                    android.graphics.Color.BLACK,
-                                    null,
-                                ),
-                            )
-                        }
-                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    val layout = if (useSurfaceView) {
+                        com.javboss.android.R.layout.view_player_surface
+                    } else {
+                        com.javboss.android.R.layout.view_player
                     }
+                    val pv = android.view.LayoutInflater.from(ctx).inflate(layout, null) as PlayerView
+                    pv.player = vm.player
+                    pv
                 },
+                update = { pv -> if (pv.player !== vm.player) pv.player = vm.player },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -354,11 +353,14 @@ fun PlayerScreen(
         run {
             val cues = vm.state.subtitleCues
             if (cues.isNotEmpty()) {
-                val t = subtitlePosMs - vm.state.subtitleOffsetMs
-                val text = cues.firstOrNull { t >= it.startMs && t < it.endMs }?.text.orEmpty()
-                androidx.compose.runtime.LaunchedEffect(text) {
-                    if (text.isNotBlank()) android.util.Log.i("JavBossSub", "cue=" + text.replace("\n", " / "))
+                // 只有当前字幕文本变化才重组（避免时钟每次 tick 整页重组导致播放卡顿）
+                val textState = androidx.compose.runtime.remember(cues, vm.state.subtitleOffsetMs) {
+                    androidx.compose.runtime.derivedStateOf {
+                        val t = subtitlePosMs - vm.state.subtitleOffsetMs
+                        cues.firstOrNull { t >= it.startMs && t < it.endMs }?.text.orEmpty()
+                    }
                 }
+                val text = textState.value
                 if (text.isNotBlank()) {
                     Box(
                         Modifier

@@ -67,18 +67,32 @@ object ApkInstaller {
             context.packageManager.canRequestPackageInstalls()
         } else true
 
-    /** 跳去系统开关页授权 */
-    fun openInstallPermission(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            runCatching {
-                context.startActivity(
-                    Intent(
-                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:${context.packageName}"),
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            }
+    /**
+     * 跳去系统开关页授权（电视盒子/电视的系统设置差异很大，这里逐个兜底尝试）。
+     * @return true 表示成功打开了某个设置页
+     */
+    fun openInstallPermission(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val candidates = listOf(
+            Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}"),
+            ),
+            Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES),
+            Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS),
+            Intent(android.provider.Settings.ACTION_APPLICATION_SETTINGS),
+            Intent(android.provider.Settings.ACTION_SETTINGS),
+        )
+        for (intent in candidates) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val ok = runCatching {
+                val resolved = context.packageManager.resolveActivity(intent, 0) != null
+                if (resolved) context.startActivity(intent)
+                resolved
+            }.getOrDefault(false)
+            if (ok) return true
         }
+        return false
     }
 
     /** 调起安装器 */

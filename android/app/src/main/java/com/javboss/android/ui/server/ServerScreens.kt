@@ -110,14 +110,14 @@ class DirectoryViewModel : ViewModel() {
                 is ApiResult.Success -> {
                     message = "已开始扫描：${dir.path}"
                     scanElapsed = 0
-                    pollScan()
+                    pollScan(dir.id)
                 }
                 is ApiResult.Failure -> message = "触发失败：${result.message}"
             }
         }
     }
 
-    private suspend fun pollScan() {
+    private suspend fun pollScan(dirId: Long) {
         var seconds = 0
         while (seconds < 300) {
             kotlinx.coroutines.delay(1500)
@@ -128,7 +128,7 @@ class DirectoryViewModel : ViewModel() {
                 items = r.data.filter { !it.isDelete }
                 val scanning = items.any { it.isScanning || it.workStatus == "scanning" }
                 if (!scanning) {
-                    val summary = items.firstOrNull()?.lastScanSummary
+                    val summary = items.firstOrNull { it.id == dirId }?.lastScanSummary
                     message = summary?.let {
                         "扫描完成：发现 ${it.filesSeen} 个文件，新增 ${it.inserted}，更新 ${it.updated}，移除 ${it.removed}（${it.durationMs / 1000}s）"
                     } ?: "扫描完成"
@@ -146,6 +146,23 @@ class DirectoryViewModel : ViewModel() {
 @Composable
 fun DirectoryScreen(onBack: () -> Unit, vm: DirectoryViewModel = viewModel()) {
     LaunchedEffect(Unit) { vm.load() }
+    // 删除前必须确认（服务端会软删除整条目录记录）
+    var confirmDelete by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<DirectoryRef?>(null)
+    }
+    confirmDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("删除目录？") },
+            text = { Text("将从服务器移除目录：\n${target.path}\n（记录会软删除，已入库的视频不受影响）") },
+            confirmButton = {
+                TextButton(onClick = { vm.delete(target); confirmDelete = null }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("取消") } },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -202,7 +219,7 @@ fun DirectoryScreen(onBack: () -> Unit, vm: DirectoryViewModel = viewModel()) {
                                             )
                                         }
                                         TextButton(onClick = { vm.scan(dir) }) { Text("扫描") }
-                                        TextButton(onClick = { vm.delete(dir) }) {
+                                        TextButton(onClick = { confirmDelete = dir }) {
                                             Text("删除", color = MaterialTheme.colorScheme.error)
                                         }
                                     }

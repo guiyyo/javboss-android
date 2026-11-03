@@ -168,9 +168,9 @@ fun TagManagementScreen(onBack: () -> Unit, vm: TagManagementViewModel = viewMod
                                 Text("设分类（${selected.size}）")
                             }
                             OutlinedButton(onClick = {
-                                selected.forEach { id -> vm.deleteTag(id) }
+                                vm.deleteTags(selected.toList())
                                 selected = emptySet()
-                            }) { Text("批量删除") }
+                            }) { Text("删除所选（${selected.size}）") }
                             TextButton(onClick = { selected = emptySet() }) { Text("取消选择") }
                         }
                     }
@@ -187,15 +187,6 @@ fun TagManagementScreen(onBack: () -> Unit, vm: TagManagementViewModel = viewMod
                                         "${tag.simplifiedName.ifBlank { tag.name }} (${tag.count})",
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                trailingIcon = {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = "删除",
-                                        modifier = Modifier
-                                            .heightIn(max = 16.dp)
-                                            .clickable { vm.deleteTag(tag.id) },
                                     )
                                 },
                             )

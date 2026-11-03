@@ -59,6 +59,10 @@ object UpdateChecker {
                     ?.firstOrNull { it.endsWith(".apk", ignoreCase = true) }
             }.getOrNull()
             val latest = tag.trim().removePrefix("v").removePrefix("V")
+            android.util.Log.i(
+                "JavBossUpdate",
+                "release check: current=$currentVersion latest=$tag hasUpdate=${isNewer(latest, currentVersion)}",
+            )
             UpdateInfo(
                 latestVersion = latest.ifBlank { tag },
                 notes = notes.trim(),

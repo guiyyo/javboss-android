@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -78,8 +79,9 @@ fun SubtitlePickerSheet(
     var elapsedSec by remember { mutableStateOf(0) }
     var justLoaded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(loadingId) {
-        if (loadingId == null) return@LaunchedEffect
+    // 搜索 / 下载过程中都计时（原来只在下载时计时，搜索时状态里的秒数一直是 0）
+    LaunchedEffect(searching, loadingId) {
+        if (!searching && loadingId == null) return@LaunchedEffect
         elapsedSec = 0
         while (true) {
             delay(1000)
@@ -87,10 +89,42 @@ fun SubtitlePickerSheet(
         }
     }
 
+    // 安装任务状态（与弹窗生命周期无关）
+    val installState by AppGraph.subtitle.installState.collectAsState()
+    LaunchedEffect(installState) {
+        val st = installState ?: return@LaunchedEffect
+        if (st.code != code) return@LaunchedEffect
+        if (!st.done) {
+            loadingId = st.candidateId
+            progress = st.progress
+            status = st.stage
+            error = null
+            justLoaded = false
+        } else {
+            loadingId = null
+            progress = null
+            if (st.error != null) {
+                error = "加载失败：${st.error}"
+                status = null
+            } else {
+                installed = st.installed
+                st.installed?.let { onLoaded(it) }
+                justLoaded = true
+                status = "✔ 已加载并应用：${st.title}"
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         folderUri = runCatching { AppGraph.settings.uiPrefs.first().subtitleFolder }.getOrNull()
         locals = AppGraph.subtitle.findLocal(code)
         installed = AppGraph.subtitle.current(code)
+        // 先展示上次搜索结果，避免每次重开都要重新等
+        val cached = AppGraph.subtitle.cachedSearch(code)
+        if (cached.isNotEmpty() && online.isEmpty()) {
+            online = cached
+            status = "上次搜到 ${cached.size} 条（点「搜索」可刷新）"
+        }
     }
 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -116,7 +150,7 @@ fun SubtitlePickerSheet(
         scope.launch {
             AppGraph.subtitle.searchOnline(query.ifBlank { code }) { attempt, total, source ->
                 val host = source.removePrefix("https://").removePrefix("http://").trimEnd('/')
-                status = "正在尝试源 $attempt/$total：$host（${elapsedSec}s）"
+                status = "正在尝试源 $attempt/$total：$host"
             }
                 .onSuccess {
                     online = it
@@ -139,30 +173,21 @@ fun SubtitlePickerSheet(
         justLoaded = false
         error = null
         status = "解析字幕页…"
-        scope.launch {
-            status = "下载中…"
-            AppGraph.subtitle.install(code, c) { p -> progress = p }
-                .onSuccess { inst ->
-                    progress = 1f
-                    status = "已保存 ${inst.name}（${File(inst.filePath).length() / 1024}KB），正在应用…"
-                    installed = inst
-                    onLoaded(inst)
-                    justLoaded = true
-                    status = "✔ 已加载并应用：${inst.name}"
-                    delay(800)
-                    loadingId = null
-                    progress = null
-                }
-                .onFailure {
-                    error = "加载失败：${it.message}"
-                    status = null
-                    loadingId = null
-                    progress = null
-                }
-        }
+        // 交给仓库的 IO 作用域：关掉弹窗也不会中断，结果保存在 installState
+        AppGraph.subtitle.installAsync(code, c)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier.fillMaxWidth(0.92f).heightIn(max = 560.dp),
+        ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -221,6 +246,13 @@ fun SubtitlePickerSheet(
                 }
             }
 
+            if (searching || loadingId != null) {
+                Text(
+                    "已用 ${elapsedSec}s · 源站较慢时解析/下载可能要 30~60 秒，请耐心等",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (status != null || loadingId != null) {
                 Column {
                     Text(
@@ -268,7 +300,7 @@ fun SubtitlePickerSheet(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (searching) {
+                    if (searching || loadingId != null) {
                         Box(Modifier.fillMaxWidth().heightIn(min = 60.dp), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                         }
@@ -337,6 +369,7 @@ fun SubtitlePickerSheet(
                     }
                 }
             }
+        }
         }
     }
 }

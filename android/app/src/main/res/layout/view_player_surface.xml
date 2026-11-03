@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅作为渲染容器：控制器由 Compose 自绘（use_controller=false）。
+  surface_type=surface_view：走硬件 overlay 合成，TextureView 需要 GPU 拷贝，播放时容易掉帧。
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/player_view"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    app:use_controller="false"
+    app:surface_type="surface_view"
+    app:resize_mode="fit"
+    app:show_buffering="never" />

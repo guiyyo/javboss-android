@@ -18,6 +18,9 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  */
 class SettingsStore(private val context: Context) {
 
+    /** 播放相关的高频写入走独立存储（避免播放时反复触发 uiPrefs 重组） */
+    private val playback = PlaybackStore(context)
+
     object Keys {
         val SERVER_URL = stringPreferencesKey("server_url")
         val SESSION_COOKIE = stringPreferencesKey("session_cookie")
@@ -96,9 +99,18 @@ class SettingsStore(private val context: Context) {
             tvIdleLockMinutes = p[UiPrefsKeys.TV_IDLE_LOCK_MIN] ?: 0,
             subtitleFolder = p[UiPrefsKeys.SUBTITLE_FOLDER] ?: "",
             subtitleCatBase = p[UiPrefsKeys.SUBTITLE_CAT_BASE] ?: "https://subtitlecat.com",
+            subtitleProxy = p[UiPrefsKeys.SUBTITLE_PROXY] ?: "",
+            subtitleProxyHost = p[UiPrefsKeys.SUBTITLE_PROXY_HOST] ?: "",
+            subtitleProxyPort = p[UiPrefsKeys.SUBTITLE_PROXY_PORT] ?: 8899,
+            subtitleProxyHttps = p[UiPrefsKeys.SUBTITLE_PROXY_HTTPS] ?: false,
+            netProxyHost = p[UiPrefsKeys.NET_PROXY_HOST] ?: "",
+            netProxyPort = p[UiPrefsKeys.NET_PROXY_PORT] ?: 7890,
+            netProxyType = p[UiPrefsKeys.NET_PROXY_TYPE] ?: "http",
+            subtitleChineseOnly = p[UiPrefsKeys.SUBTITLE_CHINESE_ONLY] ?: true,
             autoCheckUpdate = p[UiPrefsKeys.AUTO_CHECK_UPDATE] ?: true,
             updateMirror = p[UiPrefsKeys.UPDATE_MIRROR] ?: "",
             updateMirrorLastTest = p[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] ?: 0L,
+            playerSurfaceView = p[UiPrefsKeys.PLAYER_SURFACE_VIEW] ?: false,
         )
     }
 
@@ -126,6 +138,9 @@ class SettingsStore(private val context: Context) {
     suspend fun setSubtitleFolder(value: String) =
         context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_FOLDER] = value }
 
+    suspend fun setPlayerSurfaceView(value: Boolean) =
+        context.dataStore.edit { it[UiPrefsKeys.PLAYER_SURFACE_VIEW] = value }
+
     suspend fun setUpdateMirrorLastTest(value: Long) =
         context.dataStore.edit { it[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] = value }
 
@@ -141,38 +156,90 @@ class SettingsStore(private val context: Context) {
     suspend fun setUpdateSkippedVersion(value: String) =
         context.dataStore.edit { it[UiPrefsKeys.UPDATE_SKIPPED_VERSION] = value }
 
+    suspend fun setSubtitleChineseOnly(value: Boolean) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_CHINESE_ONLY] = value }
+
+    suspend fun setSubtitleProxy(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_PROXY] = value }
+
+    suspend fun setSubtitleProxyHost(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_PROXY_HOST] = value }
+
+    suspend fun setSubtitleProxyPort(value: Int) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_PROXY_PORT] = value }
+
+    suspend fun setSubtitleProxyHttps(value: Boolean) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_PROXY_HTTPS] = value }
+
+    suspend fun setNetProxyHost(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.NET_PROXY_HOST] = value }
+
+    suspend fun setNetProxyPort(value: Int) =
+        context.dataStore.edit { it[UiPrefsKeys.NET_PROXY_PORT] = value }
+
+    suspend fun setNetProxyType(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.NET_PROXY_TYPE] = value }
+
+    /** 网络代理地址（host:port），未配置返回 null */
+    suspend fun netProxy(): java.net.Proxy? {
+        val prefs = uiPrefs.first()
+        val host = prefs.netProxyHost.trim()
+        if (host.isBlank()) return null
+        val port = prefs.netProxyPort.takeIf { it in 1..65535 } ?: 7890
+        val type = if (prefs.netProxyType.equals("socks", true)) java.net.Proxy.Type.SOCKS else java.net.Proxy.Type.HTTP
+        return runCatching { java.net.Proxy(type, java.net.InetSocketAddress(host, port)) }.getOrNull()
+    }
+
+    /**
+     * 实际使用的代理前缀：
+     *  - 填了 Host → 自动拼 `http://host:port/?u={url}`
+     *  - 否则用高级字段 subtitleProxy（完整前缀 / {url} 模板），都为空则直连
+     */
+    suspend fun subtitleProxyUrl(): String {
+        val prefs = uiPrefs.first()
+        val raw = prefs.subtitleProxyHost.trim()
+        if (raw.isNotBlank()) {
+            // 支持 IP、域名，也支持用户直接粘完整地址（带 https:// 或已带端口）
+            val scheme = when {
+                raw.startsWith("https://", true) -> "https"
+                raw.startsWith("http://", true) -> "http"
+                prefs.subtitleProxyHttps -> "https"
+                else -> "http"
+            }
+            var h = raw.removePrefix("https://").removePrefix("http://")
+                .removePrefix("HTTPS://").removePrefix("HTTP://")
+                .trim()
+                .substringBefore('/')          // 丢掉可能带的路径
+            h = h.trimEnd('/')
+            val port = prefs.subtitleProxyPort.takeIf { it in 1..65535 } ?: 8899
+            val hostPort = if (h.contains(':')) h else "$h:$port"
+            return "$scheme://$hostPort/?u={url}"
+        }
+        return prefs.subtitleProxy.trim()
+    }
+
     suspend fun setSubtitleCatBase(value: String) =
         context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_CAT_BASE] = value }
 
     /* ---------------- 每部作品的字幕选择（按番号记忆） ---------------- */
 
-    private fun subSelKey(code: String) = stringPreferencesKey("sub_sel_" + code.filter { it.isLetterOrDigit() }.uppercase())
-    private fun subOffKey(code: String) = androidx.datastore.preferences.core.longPreferencesKey("sub_off_" + code.filter { it.isLetterOrDigit() }.uppercase())
 
-    suspend fun subtitleSelection(code: String): String? =
-        context.dataStore.data.first()[subSelKey(code)]?.takeIf { it.isNotBlank() }
+    suspend fun subtitleSelection(code: String): String? = playback.subtitleSelection(code)
 
-    suspend fun subtitleOffset(code: String): Long =
-        context.dataStore.data.first()[subOffKey(code)] ?: 0L
+    suspend fun subtitleOffset(code: String): Long = playback.subtitleOffset(code)
 
     suspend fun setSubtitleSelection(code: String, name: String, offsetMs: Long) =
-        context.dataStore.edit {
-            it[subSelKey(code)] = name
-            it[subOffKey(code)] = offsetMs
-        }
+        playback.setSubtitleSelection(code, name, offsetMs)
 
     suspend fun setTvIdleLockMinutes(value: Int) =
         context.dataStore.edit { it[UiPrefsKeys.TV_IDLE_LOCK_MIN] = value }
 
     /** 本片是否标记为「无需字幕」（硬字幕/自带） */
-    private fun subSkipKey(code: String) =
-        androidx.datastore.preferences.core.booleanPreferencesKey("sub_skip_" + code.filter { it.isLetterOrDigit() }.uppercase())
 
-    suspend fun subtitleSkipped(code: String): Boolean =
-        context.dataStore.data.first()[subSkipKey(code)] ?: false
+    suspend fun subtitleSkipped(code: String): Boolean = playback.subtitleSkipped(code)
 
     suspend fun setSubtitleSkipped(code: String, value: Boolean) =
-        context.dataStore.edit { it[subSkipKey(code)] = value }
+        playback.setSubtitleSkipped(code, value)
 
     suspend fun setTvPinEnabled(value: Boolean) =
         context.dataStore.edit { it[UiPrefsKeys.TV_PIN_ENABLED] = value }
@@ -201,11 +268,9 @@ class SettingsStore(private val context: Context) {
     /** 上次列表的筛选/搜索快照（JSON），用于「下次打开回到原处」。 */
     val javQuerySnapshot: Flow<String?> = context.dataStore.data.map { it[UiPrefsKeys.JAV_QUERY_SNAPSHOT] }
 
-    /** 本地观看记录（服务端没有时间戳/精确位置，这里补齐）。 */
+    /** 本地观看记录（存放在独立 playback store，写入不再触发 uiPrefs 发射）。 */
     val watchHistory: Flow<Map<String, com.javboss.android.data.history.WatchEntry>> =
-        context.dataStore.data.map { prefs ->
-            prefs[UiPrefsKeys.WATCH_HISTORY].toWatchMap()
-        }
+        playback.watchHistory
 
     private fun String?.toWatchMap(): Map<String, com.javboss.android.data.history.WatchEntry> {
         if (this.isNullOrBlank()) return emptyMap()
@@ -218,24 +283,11 @@ class SettingsStore(private val context: Context) {
         }.getOrDefault(emptyMap())
     }
 
-    suspend fun recordWatch(key: String, entry: com.javboss.android.data.history.WatchEntry) {
-        context.dataStore.edit { prefs ->
-            val map = prefs[UiPrefsKeys.WATCH_HISTORY].toWatchMap().toMutableMap()
-            map[key] = entry
-            val trimmed = if (map.size > 500) {
-                map.entries.sortedByDescending { it.value.at }.take(500).associate { it.key to it.value }
-            } else {
-                map
-            }
-            prefs[UiPrefsKeys.WATCH_HISTORY] = kotlinx.serialization.json.Json.encodeToString(
-                com.javboss.android.data.history.WatchHistorySnapshot.serializer(),
-                com.javboss.android.data.history.WatchHistorySnapshot(trimmed),
-            )
-        }
-    }
+    suspend fun recordWatch(key: String, entry: com.javboss.android.data.history.WatchEntry) =
+        playback.recordWatch(key, entry)
 
     suspend fun watchEntry(key: String): com.javboss.android.data.history.WatchEntry? =
-        watchHistory.first()[key]
+        playback.watchEntry(key)
 
     suspend fun setJavQuerySnapshot(json: String?) {
         context.dataStore.edit { prefs ->

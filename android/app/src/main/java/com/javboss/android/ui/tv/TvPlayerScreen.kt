@@ -24,6 +24,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,10 +66,16 @@ fun TvPlayerScreen(
     locationId: Long,
     title: String,
     javId: Long,
+    /** 详情页已知番号时直接传入，省掉一次网络请求（也避免取不到 code 导致字幕不加载） */
+    javCode: String = "",
     onBack: () -> Unit,
     vm: PlayerViewModel = viewModel(key = "tvplayer-$videoId-$locationId"),
 ) {
     val context = LocalContext.current
+    val uiPrefs by com.javboss.android.di.AppGraph.settings.uiPrefs.collectAsState(
+        initial = com.javboss.android.data.settings.UiPrefs(),
+    )
+    val useSurfaceView = uiPrefs.playerSurfaceView
     val focus = remember { FocusRequester() }
     var overlayVisible by remember { mutableStateOf(true) }
     var positionMs by remember { mutableStateOf(0L) }
@@ -121,7 +128,13 @@ fun TvPlayerScreen(
         vm.refreshPendingScreenshots(context)
     }
 
-    LaunchedEffect(vm.player) {
+    // 信息栏隐藏时不刷新进度 state：TextureView 下每次 UI 重绘都可能挤掉一帧视频
+    LaunchedEffect(vm.player, overlayVisible) {
+        vm.player?.let { exo ->
+            val d = exo.duration
+            if (d > 0) durationMs = d
+        }
+        if (!overlayVisible) return@LaunchedEffect
         while (true) {
             vm.player?.let { exo ->
                 positionMs = exo.currentPosition.coerceAtLeast(0)
@@ -129,7 +142,7 @@ fun TvPlayerScreen(
                 durationMs = if (d > 0) d else 0
                 isPlaying = exo.isPlaying
             }
-            delay(400)
+            delay(1000)
         }
     }
 
@@ -157,11 +170,13 @@ fun TvPlayerScreen(
     }
 
     // 进播放页：自动套用该番号已下载的字幕
-    LaunchedEffect(javId) {
-        if (javId <= 0) return@LaunchedEffect
-        val code = runCatching {
-            (com.javboss.android.di.AppGraph.jav.detail(javId) as? com.javboss.android.core.net.ApiResult.Success)?.data?.code
-        }.getOrNull().orEmpty()
+    LaunchedEffect(javId, javCode) {
+        if (javCode.isBlank() && javId <= 0) return@LaunchedEffect
+        val code = javCode.ifBlank {
+            runCatching {
+                (com.javboss.android.di.AppGraph.jav.detail(javId) as? com.javboss.android.core.net.ApiResult.Success)?.data?.code
+            }.getOrNull().orEmpty()
+        }
         if (code.isBlank()) return@LaunchedEffect
         subCode = code
         val skipped = runCatching { com.javboss.android.di.AppGraph.settings.subtitleSkipped(code) }.getOrDefault(false)
@@ -183,7 +198,7 @@ fun TvPlayerScreen(
         while (true) {
             val p = vm.player?.currentPosition ?: 0L
             if (p > 0) subPos = p
-            delay(100)
+            delay(500)
         }
     }
 
@@ -194,7 +209,7 @@ fun TvPlayerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            // 不要在这里铺不透明背景：SurfaceView 是「窗口下方打洞」，铺黑会盖住视频
             .focusRequester(focus)
             .focusable()
             .onKeyEvent { event ->
@@ -202,6 +217,21 @@ fun TvPlayerScreen(
                 // 字幕键（175）或遥控器菜单键 → 打开字幕面板
                 if (event.nativeKeyEvent.keyCode == 175 || event.key == Key.Menu) {
                     panelOpen = !panelOpen
+                    // 打开面板时若还没加载字幕，尝试从缓存/已下载里套用一次
+                    if (panelOpen && subCues.isEmpty() && subCode.isNotBlank()) {
+                        kotlinx.coroutines.MainScope().launch {
+                            val inst = runCatching {
+                                com.javboss.android.di.AppGraph.subtitle.current(subCode)
+                            }.getOrNull() ?: return@launch
+                            val f = java.io.File(inst.filePath)
+                            if (!f.exists()) return@launch
+                            subCues = runCatching {
+                                com.javboss.android.data.subtitle.parseSrtCues(f.readText(Charsets.UTF_8))
+                            }.getOrDefault(emptyList())
+                            subName = inst.name
+                            subOffset = inst.offsetMs
+                        }
+                    }
                     overlayVisible = true
                     return@onKeyEvent true
                 }
@@ -290,12 +320,16 @@ fun TvPlayerScreen(
         vm.player?.let { exo ->
             AndroidView(
                 factory = { ctx ->
-                    // 必须用 texture_view 版（view_player.xml）：SurfaceView 会盖住 Compose 绘制的控件
-                    val pv = android.view.LayoutInflater.from(ctx)
-                        .inflate(com.javboss.android.R.layout.view_player, null) as PlayerView
+                    val layout = if (useSurfaceView) {
+                        com.javboss.android.R.layout.view_player_surface
+                    } else {
+                        com.javboss.android.R.layout.view_player
+                    }
+                    val pv = android.view.LayoutInflater.from(ctx).inflate(layout, null) as PlayerView
                     pv.player = exo
                     pv
                 },
+                update = { pv -> if (pv.player !== exo) pv.player = exo },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -386,7 +420,14 @@ fun TvPlayerScreen(
         // 自绘字幕（自绘层，偏移即时生效）
         if (subVisible && subCues.isNotEmpty()) {
             val t0 = subPos - subOffset
-            val cue = subCues.firstOrNull { t0 >= it.startMs && t0 < it.endMs }?.text
+            // 只在文本变化时重组
+            val cueState = androidx.compose.runtime.remember(subCues, subOffset) {
+                androidx.compose.runtime.derivedStateOf {
+                    val t = subPos - subOffset
+                    subCues.firstOrNull { t >= it.startMs && t < it.endMs }?.text
+                }
+            }
+            val cue = cueState.value
             if (!cue.isNullOrBlank()) {
                 Box(
                     Modifier

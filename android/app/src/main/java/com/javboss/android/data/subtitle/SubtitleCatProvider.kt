@@ -16,17 +16,76 @@ import okhttp3.Request
  *
  * 注意：实测 `www.subtitlecat.com` 不通，裸域 `subtitlecat.com` 可用（默认值即裸域）。
  */
-class SubtitleCatProvider(private val baseUrlProvider: suspend () -> String) {
+class SubtitleCatProvider(
+    private val baseUrlProvider: suspend () -> String,
+    /** 反代前缀：非空时把 https://www.subtitlecat.com/xxx 变成 <prefix>/https://www.subtitlecat.com/xxx */
+    private val proxyProvider: suspend () -> String = { "" },
+    /** 网络代理（HTTP/SOCKS）：配置后所有字幕请求走它 */
+    private val netProxyProvider: suspend () -> java.net.Proxy? = { null },
+) {
 
-    // 字幕源专用 client：短超时，避免单源卡住一分钟（OkHttp 阻塞调用不响应协程取消）
-    private val client by lazy {
-        com.javboss.android.core.net.ApiClient.okHttp.newBuilder()
-            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
-            .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .build()
+    /** 同步取代理前缀（缓存一次，避免每次 runBlocking） */
+    @Volatile private var proxyCache: String? = null
+    private fun runBlockingProxy(url: String): String {
+        val px = proxyCache ?: runCatching {
+            kotlinx.coroutines.runBlocking { proxyProvider() }
+        }.getOrDefault("").also { proxyCache = it }
+        if (px.isBlank()) return url
+        return if (px.contains("{url}")) {
+            px.replace("{url}", java.net.URLEncoder.encode(url, "UTF-8"))
+        } else if (px.endsWith("/")) px + url
+        else "$px/$url"
     }
+
+    private suspend fun viaProxy(url: String): String {
+        val px = runCatching { proxyProvider() }.getOrDefault("").trim()
+        if (px.isEmpty()) return url
+        return if (px.contains("{url}")) px.replace("{url}", url)
+        else if (px.endsWith("/")) px + url
+        else "$px/$url"
+    }
+
+    /**
+     * 只返回 IPv4 的 DNS。
+     * 该站同时有 AAAA 记录，国内网络里 IPv6 到 Cloudflare 常先超时再回退（10~40s），
+     * 强制 IPv4 可显著缩短首包时间。
+     */
+    private object Ipv4OnlyDns : okhttp3.Dns {
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            val all = runCatching { okhttp3.Dns.SYSTEM.lookup(hostname) }.getOrDefault(emptyList())
+            val v4 = all.filterIsInstance<java.net.Inet4Address>()
+            return if (v4.isNotEmpty()) v4 else all
+        }
+    }
+
+    /** 字幕源专用 client：短超时 + 强制 IPv4 + 可选网络代理（配置变了自动重建） */
+    private fun buildClient(): okhttp3.OkHttpClient {
+        val builder = com.javboss.android.core.net.ApiClient.okHttp.newBuilder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .dns(Ipv4OnlyDns)
+        val proxy = runCatching { kotlinx.coroutines.runBlocking { netProxyProvider() } }.getOrNull()
+        if (proxy != null) builder.proxy(proxy)
+        return builder.build()
+    }
+
+    @Volatile private var cachedProxyKey: String? = null
+    @Volatile private var cachedClient: okhttp3.OkHttpClient? = null
+
+    private val client: okhttp3.OkHttpClient
+        get() {
+            val proxy = runCatching { kotlinx.coroutines.runBlocking { netProxyProvider() } }.getOrNull()
+            val key = proxy?.address()?.toString() ?: "direct"
+            val c = cachedClient
+            if (c != null && cachedProxyKey == key) return c
+            val built = buildClient()
+            cachedClient = built
+            cachedProxyKey = key
+            return built
+        }
+
 
     /** 上次成功的域名（同一个站点，www 与裸域可互换） */
     @Volatile private var workingBase: String? = null
@@ -79,10 +138,17 @@ class SubtitleCatProvider(private val baseUrlProvider: suspend () -> String) {
     suspend fun resolveDownload(candidate: SubtitleCandidate, preferChinese: Boolean = true): String? =
         withContext(Dispatchers.IO) {
             candidate.downloadUrl?.let { return@withContext it }
-            val b = base()
             val detail = candidate.detailUrl ?: return@withContext null
-            val html = fetch(detail, b) ?: return@withContext null
-            val links = Regex("href=\"([^\"]+\\.srt)\"", RegexOption.IGNORE_CASE)
+            // 用详情页自己的域名当基准：搜索可能是通过 www 成功的，而 workingBase 可能还是默认裸域
+            val detailAbs = absolutize(detail, base())
+            val hostBase = hostOf(detailAbs) ?: base()
+            val html = fetch(detailAbs, hostBase) ?: run {
+                // 域名互换再试一次（www ↔ 裸域）
+                val alt = swapHost(hostBase) ?: return@withContext null
+                fetch(detailAbs.replace(hostBase, alt), alt)
+            } ?: return@withContext null
+            // 同时接受 srt / ass / ssa / vtt / sub（安装时统一转成 SRT）
+            val links = Regex("href=\"([^\"]+\\.(?:srt|ass|ssa|vtt|sub))\"", RegexOption.IGNORE_CASE)
                 .findAll(html)
                 .map { it.groupValues[1] }
                 .distinct()
@@ -95,7 +161,7 @@ class SubtitleCatProvider(private val baseUrlProvider: suspend () -> String) {
                     ?: links.firstOrNull { it.contains("-en", true) }
                     ?: links.first()
             } else links.first()
-            absolutize(picked, b)
+            absolutize(picked, hostBase)
         }
 
     /** 下载字幕，带字节进度回调（total 可能为 -1）。 */
@@ -104,12 +170,12 @@ class SubtitleCatProvider(private val baseUrlProvider: suspend () -> String) {
         onProgress: (read: Long, total: Long) -> Unit = { _, _ -> },
     ): ByteArray? = withContext(Dispatchers.IO) {
         runCatching {
-            val b = base()
-            val abs = if (url.startsWith("http")) url else absolutize(url, b)
+            val abs = if (url.startsWith("http")) url else absolutize(url, base())
+            val refBase = hostOf(abs) ?: base()
             val req = Request.Builder()
-                .url(abs)
+                .url(runBlockingProxy(abs))
                 .header("User-Agent", UA)
-                .header("Referer", "$b/")
+                .header("Referer", "$refBase/")
                 .build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
@@ -191,9 +257,24 @@ class SubtitleCatProvider(private val baseUrlProvider: suspend () -> String) {
         return if (clean.startsWith("/")) "$base$clean" else "$base/${clean.trimStart('/')}"
     }
 
+    /** 从绝对 URL 里取 scheme://host */
+    private fun hostOf(url: String): String? = runCatching {
+        val u = java.net.URI(url)
+        if (u.scheme == null || u.host == null) null else "${u.scheme}://${u.host}"
+    }.getOrNull()
+
+    /** 域名互换：www.x.com ↔ x.com */
+    private fun swapHost(base: String): String? = when {
+        base.contains("://www.") -> base.replace("://www.", "://")
+        base.contains("://") -> base.replace("://", "://www.")
+        else -> null
+    }
+
     private fun fetch(url: String, base: String): String? = runCatching {
+        // 若配置了反代前缀，实际请求走代理（业务 URL 不变）
+        val realUrl = runBlockingProxy(url)
         val req = Request.Builder()
-            .url(url)
+            .url(realUrl)
             .header("User-Agent", UA)
             .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             .header("Referer", "$base/")
@@ -209,9 +290,10 @@ class SubtitleCatProvider(private val baseUrlProvider: suspend () -> String) {
         const val DEFAULT_BASE = "https://subtitlecat.com"
 
         /** 默认字幕源（同一站点的多个入口，用于超时换源） */
+        // 实测（2026-10-31）：裸域 subtitlecat.com 经常 15s 超时，www 正常 → www 放前面
         val DEFAULT_SOURCES = listOf(
-            "https://subtitlecat.com",
             "https://www.subtitlecat.com",
+            "https://subtitlecat.com",
             "http://subtitlecat.com",
             "http://www.subtitlecat.com",
         )

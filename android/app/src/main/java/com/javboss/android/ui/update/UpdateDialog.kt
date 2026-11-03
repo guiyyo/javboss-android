@@ -63,6 +63,14 @@ fun UpdateDialog(
     val notesScroll = rememberScrollState()
     val notesFocus = remember { FocusRequester() }
 
+    // 电视端：弹窗打开后把焦点放到「更新内容」区域，方向键才能滚动
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (tvMode && info.notes.isNotBlank()) {
+            kotlinx.coroutines.delay(300)
+            runCatching { notesFocus.requestFocus() }
+        }
+    }
+
     fun start() {
         val apk = info.apkUrl
         if (apk == null) {
@@ -70,8 +78,13 @@ fun UpdateDialog(
             return
         }
         if (!ApkInstaller.canInstall(context)) {
-            ApkInstaller.openInstallPermission(context)
-            error = "请先允许「安装未知来源应用」，再回来点一次下载"
+            val opened = ApkInstaller.openInstallPermission(context)
+            status = null
+            error = if (opened) {
+                "请在打开的设置里允许「安装未知应用 / 未知来源」，然后回来再点一次「下载并安装」"
+            } else {
+                "系统未开放安装权限页：请到电视「设置 → 安全/隐私 → 未知来源」允许安装，或用 U 盘/文件管理器安装下载好的 APK"
+            }
             return
         }
         downloading = true
@@ -129,10 +142,13 @@ fun UpdateDialog(
                                 if (!tvMode || ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                                 when (ev.key) {
                                     Key.DirectionUp -> {
+                                        // 已经到顶就放行，让焦点回到按钮
+                                        if (notesScroll.value <= 0) return@onKeyEvent false
                                         scope.launch { notesScroll.animateScrollBy(-180f) }
                                         true
                                     }
                                     Key.DirectionDown -> {
+                                        if (notesScroll.value >= notesScroll.maxValue) return@onKeyEvent false
                                         scope.launch { notesScroll.animateScrollBy(180f) }
                                         true
                                     }

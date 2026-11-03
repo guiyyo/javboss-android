@@ -64,7 +64,6 @@ fun SettingsScreen(
     onOpenResources: () -> Unit = {},
     onOpenProviders: () -> Unit = {},
     onOpenTranslation: () -> Unit = {},
-    onOpenDisplay: () -> Unit = {},
     onOpenTags: () -> Unit = {},
     onOpenFavorites: () -> Unit = {},
     onOpenAccount: () -> Unit = {},
@@ -79,6 +78,15 @@ fun SettingsScreen(
     var modeDialogOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var subtitleBaseDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var subtitleBaseInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var subtitleProxyDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var subtitleProxyInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var subtitleProxyHostInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("192.168.1.1") }
+    var subtitleProxyPortInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("8899") }
+    var subtitleProxyHttps by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var netProxyDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var netProxyHostInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var netProxyPortInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("7890") }
+    var netProxySocks by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var subtitleSelfTestDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var subtitleSelfTestInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     var subtitleSelfTestResult by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
@@ -329,6 +337,132 @@ fun SettingsScreen(
                 )
             }
 
+            if (subtitleProxyDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { subtitleProxyDialog = false },
+                    title = { Text("字幕源代理") },
+                    text = {
+                        Column {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = subtitleProxyHostInput,
+                                onValueChange = { subtitleProxyHostInput = it },
+                                label = { Text("代理 IP / 主机") },
+                                placeholder = { Text("192.168.1.1") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            ) {
+                                Text("协议", style = MaterialTheme.typography.labelMedium)
+                                androidx.compose.material3.FilterChip(
+                                    selected = !subtitleProxyHttps,
+                                    onClick = { subtitleProxyHttps = false },
+                                    label = { Text("HTTP") },
+                                )
+                                androidx.compose.material3.FilterChip(
+                                    selected = subtitleProxyHttps,
+                                    onClick = { subtitleProxyHttps = true },
+                                    label = { Text("HTTPS") },
+                                )
+                            }
+                            androidx.compose.material3.OutlinedTextField(
+                                value = subtitleProxyPortInput,
+                                onValueChange = { v -> subtitleProxyPortInput = v.filter { it.isDigit() }.take(5) },
+                                label = { Text("端口") },
+                                placeholder = { Text("8899") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            )
+                            Text(
+                                "只填 主机（IP 或域名，默认 192.168.1.1）+ 端口（默认 8899）+ 协议（HTTP/HTTPS），App 自动拼成 协议://主机:端口/?u={url}；留空主机 = 直连。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            subtitleProxyDialog = false
+                            scope.launch {
+                                AppGraph.settings.setSubtitleProxyHost(subtitleProxyHostInput.trim())
+                                AppGraph.settings.setSubtitleProxyPort(
+                                    subtitleProxyPortInput.toIntOrNull() ?: 8899,
+                                )
+                                AppGraph.settings.setSubtitleProxyHttps(subtitleProxyHttps)
+                            }
+                        }) { Text("保存") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { subtitleProxyDialog = false }) { Text("取消") }
+                    },
+                )
+            }
+
+            if (netProxyDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { netProxyDialog = false },
+                    title = { Text("网络代理") },
+                    text = {
+                        Column {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = netProxyHostInput,
+                                onValueChange = { netProxyHostInput = it },
+                                label = { Text("代理 IP / 主机") },
+                                placeholder = { Text("127.0.0.1 或 192.168.1.1") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            ) {
+                                Text("类型", style = MaterialTheme.typography.labelMedium)
+                                androidx.compose.material3.FilterChip(
+                                    selected = !netProxySocks,
+                                    onClick = { netProxySocks = false },
+                                    label = { Text("HTTP") },
+                                )
+                                androidx.compose.material3.FilterChip(
+                                    selected = netProxySocks,
+                                    onClick = { netProxySocks = true },
+                                    label = { Text("SOCKS5") },
+                                )
+                            }
+                            androidx.compose.material3.OutlinedTextField(
+                                value = netProxyPortInput,
+                                onValueChange = { v -> netProxyPortInput = v.filter { it.isDigit() }.take(5) },
+                                label = { Text("端口") },
+                                placeholder = { Text("7890") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            )
+                            Text(
+                                "只作用于字幕、检查更新等外网请求；访问自家 JavBoss 服务器不受影响。留空主机 = 不使用网络代理。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            netProxyDialog = false
+                            scope.launch {
+                                AppGraph.settings.setNetProxyHost(netProxyHostInput.trim())
+                                AppGraph.settings.setNetProxyPort(netProxyPortInput.toIntOrNull() ?: 7890)
+                                AppGraph.settings.setNetProxyType(if (netProxySocks) "socks" else "http")
+                            }
+                        }) { Text("保存") }
+                    },
+                    dismissButton = { TextButton(onClick = { netProxyDialog = false }) { Text("取消") } },
+                )
+            }
+
             SectionCard("卡片显示（仅本机）") {
                 val config by com.javboss.android.di.AppGraph.config.config.collectAsState()
                 val webPortrait = (config["jav_card_portrait"] ?: "").let { it == "true" || it == "1" }
@@ -362,7 +496,12 @@ fun SettingsScreen(
                 StepperRow("标题最多行数", prefs.titleRows, listOf(1, 2, 3)) {
                     scope.launch { AppGraph.settings.setTitleRows(it) }
                 }
-                SwitchRow("隐藏标签", "卡片不显示标签行", prefs.hideTags) {
+                SwitchRow(
+                "SurfaceView 渲染",
+                if (prefs.playerSurfaceView) "已启用（部分模拟器上会每秒掉帧）" else "默认 TextureView（更稳）",
+                prefs.playerSurfaceView,
+            ) { scope.launch { AppGraph.settings.setPlayerSurfaceView(it) } }
+            SwitchRow("隐藏标签", "卡片不显示标签行", prefs.hideTags) {
                     scope.launch { AppGraph.settings.setHideTags(it) }
                 }
                 SwitchRow("隐藏女优", "卡片不显示女优", prefs.hideIdols) {
@@ -415,6 +554,39 @@ fun SettingsScreen(
                 NavRow("在线字幕源", prefs.subtitleCatBase) {
                     subtitleBaseInput = prefs.subtitleCatBase
                     subtitleBaseDialog = true
+                }
+                NavRow(
+                    "网络代理",
+                    if (prefs.netProxyHost.isBlank()) {
+                        "未设置（填代理 IP + 端口，字幕等外网请求走它）"
+                    } else {
+                        "${prefs.netProxyType.uppercase()}://${prefs.netProxyHost}:${prefs.netProxyPort}"
+                    },
+                ) {
+                    netProxyHostInput = prefs.netProxyHost
+                    netProxyPortInput = prefs.netProxyPort.toString()
+                    netProxySocks = prefs.netProxyType.equals("socks", true)
+                    netProxyDialog = true
+                }
+                SwitchRow(
+                    "仅中文字幕",
+                    "搜索时只保留中文条目（简中优先），减少无效等待",
+                    prefs.subtitleChineseOnly,
+                ) { scope.launch { AppGraph.settings.setSubtitleChineseOnly(it) } }
+                NavRow(
+                    "字幕源代理",
+                    if (prefs.subtitleProxyHost.isBlank()) {
+                        "未设置（只填 IP 即可，如 192.168.1.1）"
+                    } else {
+                        (if (prefs.subtitleProxyHttps) "https" else "http") +
+                            "://${prefs.subtitleProxyHost}:${prefs.subtitleProxyPort}/?u=…"
+                    },
+                ) {
+                    subtitleProxyHostInput = prefs.subtitleProxyHost.ifBlank { "192.168.1.1" }
+                    subtitleProxyPortInput = prefs.subtitleProxyPort.toString()
+                    subtitleProxyHttps = prefs.subtitleProxyHttps
+                    subtitleProxyInput = prefs.subtitleProxy
+                    subtitleProxyDialog = true
                 }
                 Text(
                     "播放时点「字幕」按钮即可搜索/加载；加载后按番号记忆，下次自动套用。",

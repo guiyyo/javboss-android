@@ -46,11 +46,8 @@ import com.javboss.android.ui.account.AccountScreen
 import com.javboss.android.ui.jav.JavEditScreen
 import com.javboss.android.ui.jav.JavListScreen
 import com.javboss.android.ui.jav.PrefixScreen
-import com.javboss.android.ui.library.IdolDetailScreen
 import com.javboss.android.ui.library.IdolListScreen
 import com.javboss.android.ui.library.SeriesListScreen
-import com.javboss.android.ui.library.SeriesDetailScreen
-import com.javboss.android.ui.library.StudioDetailScreen
 import com.javboss.android.ui.library.StudioListScreen
 import com.javboss.android.ui.player.PlaybackQueueItem
 import com.javboss.android.ui.player.PlayerScreen
@@ -372,18 +369,6 @@ private fun MainScaffoldInner(navController: androidx.navigation.NavHostControll
                     onOpenSettings = { navController.navigate("settings") },
                 )
             }
-            composable("idol/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                val idolId = entry.arguments?.getLong("id") ?: 0L
-                IdolDetailScreen(
-                    idolId = idolId,
-                    onBack = { navController.popBackStack() },
-                    onOpenWorks = { id ->
-                        navController.navigate("jav?idolIds=$id") {
-                            popUpTo("idols") { inclusive = false }
-                        }
-                    },
-                )
-            }
             composable("account") { AccountScreen(onBack = { navController.popBackStack() }) }
             composable("studios") {
                 StudioListScreen(
@@ -393,28 +378,12 @@ private fun MainScaffoldInner(navController: androidx.navigation.NavHostControll
                     onOpenSettings = { navController.navigate("settings") },
                 )
             }
-            composable("studio/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                val studioId = entry.arguments?.getLong("id") ?: 0L
-                StudioDetailScreen(
-                    studioId = studioId,
-                    onBack = { navController.popBackStack() },
-                    onOpenWorks = { id -> navController.navigate("jav?studioId=$id") },
-                )
-            }
             composable("series") {
                 SeriesListScreen(
                     onOpenSeries = { series ->
                         navController.navigate("jav?seriesId=${series.id}&r=${System.currentTimeMillis()}")
                     },
                     onOpenSettings = { navController.navigate("settings") },
-                )
-            }
-            composable("seriesDetail/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                val seriesId = entry.arguments?.getLong("id") ?: 0L
-                SeriesDetailScreen(
-                    seriesId = seriesId,
-                    onBack = { navController.popBackStack() },
-                    onOpenWorks = { id -> navController.navigate("jav?seriesId=$id") },
                 )
             }
             composable("settings") {

@@ -49,12 +49,30 @@ data class UiPrefs(
     val subtitleFolder: String = "",
     /** 在线字幕源地址（SubtitleCat 镜像可换） */
     val subtitleCatBase: String = "https://subtitlecat.com",
+    /** 字幕源反向代理前缀（高级用法：完整前缀或 {url} 模板） */
+    val subtitleProxy: String = "",
+    /** 字幕源代理主机（只填 IP/域名，App 自动拼 http://host:port/?u={url}） */
+    val subtitleProxyHost: String = "",
+    /** 字幕源代理端口 */
+    val subtitleProxyPort: Int = 8899,
+    /** 字幕源代理是否用 https（默认 http，局域网反代一般用 http） */
+    val subtitleProxyHttps: Boolean = false,
+    /** 网络代理（给字幕/更新等外网请求用）：主机 */
+    val netProxyHost: String = "",
+    /** 网络代理端口 */
+    val netProxyPort: Int = 7890,
+    /** 网络代理类型：http / socks */
+    val netProxyType: String = "http",
+    /** 只显示/只选中文字幕 */
+    val subtitleChineseOnly: Boolean = true,
     /** 启动时自动检查 GitHub 更新 */
     val autoCheckUpdate: Boolean = true,
     /** 更新下载镜像（空 = GitHub 直连），如 https://ghfast.top/ */
     val updateMirror: String = "",
     /** 上次镜像测速时间（毫秒），用于节流 */
     val updateMirrorLastTest: Long = 0L,
+    /** 播放器渲染用 SurfaceView（默认 TextureView：模拟器/部分设备上 SurfaceView 会每秒掉帧） */
+    val playerSurfaceView: Boolean = false,
 )
 
 val LocalUiPrefs = staticCompositionLocalOf { UiPrefs() }
@@ -86,8 +104,17 @@ object UiPrefsKeys {
     val TV_IDLE_LOCK_MIN = intPreferencesKey("ui_tv_idle_lock_min")
     val SUBTITLE_FOLDER = stringPreferencesKey("ui_subtitle_folder")
     val SUBTITLE_CAT_BASE = stringPreferencesKey("ui_subtitle_cat_base")
+    val SUBTITLE_PROXY = stringPreferencesKey("ui_subtitle_proxy")
+    val SUBTITLE_PROXY_HOST = stringPreferencesKey("ui_subtitle_proxy_host")
+    val SUBTITLE_PROXY_PORT = intPreferencesKey("ui_subtitle_proxy_port")
+    val SUBTITLE_PROXY_HTTPS = booleanPreferencesKey("ui_subtitle_proxy_https")
+    val NET_PROXY_HOST = stringPreferencesKey("ui_net_proxy_host")
+    val NET_PROXY_PORT = intPreferencesKey("ui_net_proxy_port")
+    val NET_PROXY_TYPE = stringPreferencesKey("ui_net_proxy_type")
+    val SUBTITLE_CHINESE_ONLY = booleanPreferencesKey("ui_subtitle_chinese_only")
     val AUTO_CHECK_UPDATE = booleanPreferencesKey("ui_auto_check_update")
     val UPDATE_SKIPPED_VERSION = stringPreferencesKey("ui_update_skipped_version")
     val UPDATE_MIRROR = stringPreferencesKey("ui_update_mirror")
     val UPDATE_MIRROR_LAST_TEST = androidx.datastore.preferences.core.longPreferencesKey("ui_update_mirror_last_test")
+    val PLAYER_SURFACE_VIEW = booleanPreferencesKey("ui_player_surface_view")
 }
