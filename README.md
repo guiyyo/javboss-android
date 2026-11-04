@@ -3,6 +3,10 @@
 <p align="center">JavBoss 的 Android 客户端：一套代码适配 <b>手机 / 平板 / Android TV</b>，连接你自己部署的 JavBoss 服务端，在移动端与电视上浏览媒体库、检索内容、播放并管理字幕。</p>
 
 <p align="center">
+  📖 <b><a href="docs/USER-GUIDE.md">客户端使用手册</a></b>　服务器地址填写 · 连接排查 · 手机 / 平板 / 电视操作 · 播放器与字幕 · 更新与隐私
+</p>
+
+<p align="center">
   <a href="../../releases"><img alt="Release" src="https://img.shields.io/github/v/release/guiyyo/javboss-android?display_name=tag"></a>
   <a href="../../releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/guiyyo/javboss-android/total?color=2ea44f"></a>
   <a href="../../stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/guiyyo/javboss-android?style=social"></a>
@@ -183,6 +187,7 @@ A: 字幕源站本身响应慢（常见 16–45 秒），并非客户端卡住�
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | **客户端使用手册**：服务器地址填写、连接排查、三端操作、播放器与字幕、更新与隐私设置 |
 | [docs/USAGE.md](docs/USAGE.md) | 使用说明：登录、三端操作、按键与手势、字幕、更新 |
 | [docs/BUILD.md](docs/BUILD.md) | 构建、签名与 CI 发布 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 技术栈、项目结构、常用命令 |
