@@ -188,7 +188,6 @@ A: 字幕源站本身响应慢（常见 16–45 秒），并非客户端卡住�
 | 文档 | 内容 |
 | --- | --- |
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | **客户端使用手册**：服务器地址填写、连接排查、三端操作、播放器与字幕、更新与隐私设置 |
-| [docs/USAGE.md](docs/USAGE.md) | 使用说明：登录、三端操作、按键与手势、字幕、更新 |
 | [docs/BUILD.md](docs/BUILD.md) | 构建、签名与 CI 发布 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 技术栈、项目结构、常用命令 |
 | [docs/FAQ.md](docs/FAQ.md) | 常见问题（连接、播放、显示、安装） |
