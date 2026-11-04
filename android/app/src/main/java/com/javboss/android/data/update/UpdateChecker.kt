@@ -29,14 +29,14 @@ object UpdateChecker {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** 独立 client：短超时，避免 GitHub 不可达时长时间等待 */
-    private val client by lazy {
-        com.javboss.android.core.net.ApiClient.okHttp.newBuilder()
-            .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
-            .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
-    }
+    /** 独立 client：短超时 + 可选网络代理 */
+    private suspend fun client(): okhttp3.OkHttpClient =
+        com.javboss.android.core.net.NetProxySupport.build(
+            proxy = com.javboss.android.core.net.NetProxySupport.current(),
+            connectSeconds = 10,
+            readSeconds = 20,
+            callSeconds = 40,
+        )
 
     suspend fun check(currentVersion: String): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         runCatching {
@@ -45,7 +45,7 @@ object UpdateChecker {
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "JavBoss-Android")
                 .build()
-            val body = client.newCall(req).execute().use { resp ->
+            val body = client().newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) error("GitHub 返回 ${resp.code}")
                 resp.body?.string() ?: error("响应为空")
             }

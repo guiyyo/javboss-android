@@ -28,13 +28,13 @@ object UpdateMirrorTester {
     private const val BUDGET_MS = 2000L          // 每个镜像最多测 2s
     private const val UA = "JavBoss-Android"
 
-    private val client by lazy {
-        com.javboss.android.core.net.ApiClient.okHttp.newBuilder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .callTimeout(7, TimeUnit.SECONDS)
-            .build()
-    }
+    private suspend fun client(): okhttp3.OkHttpClient =
+        com.javboss.android.core.net.NetProxySupport.build(
+            proxy = com.javboss.android.core.net.NetProxySupport.current(),
+            connectSeconds = 8,
+            readSeconds = 15,
+            callSeconds = 20,
+        )
 
     suspend fun test(mirror: String, apkUrl: String): MirrorSpeed = withContext(Dispatchers.IO) {
         val url = UpdateMirror.wrap(apkUrl, mirror)
@@ -48,7 +48,7 @@ object UpdateMirrorTester {
                 .build()
 
             val start = SystemClock.elapsedRealtime()
-            client.newCall(req).execute().use { resp ->
+            client().newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     return@withContext MirrorSpeed(mirror, label, false, error = "HTTP ${resp.code}")
                 }

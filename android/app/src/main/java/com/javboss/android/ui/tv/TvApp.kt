@@ -985,6 +985,7 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                 tvChecking = true
                 tvUpdateMsg = null
                 scope.launch {
+                    com.javboss.android.data.update.UpdateInstaller.reset()
                     com.javboss.android.data.update.UpdateChecker
                         .check(com.javboss.android.BuildConfig.VERSION_NAME)
                         .onSuccess { info ->
@@ -1209,7 +1210,7 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
             com.javboss.android.ui.update.UpdateDialog(
                 info = info,
                 currentVersion = com.javboss.android.BuildConfig.VERSION_NAME,
-                mirror = prefs.updateMirror,
+                mirror = if (prefs.netProxyHost.isNotBlank()) "" else prefs.updateMirror,
                 onDismiss = { tvUpdate = null },
                 tvMode = true,
             )

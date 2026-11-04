@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import com.javboss.android.ui.common.isTvDevice
 import com.javboss.android.ui.nav.AppRoot
 import com.javboss.android.ui.theme.JavBossTheme
 
@@ -35,6 +36,19 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         // 进程被系统回收后重建时兜底初始化（init 内部幂等）
         runCatching { com.javboss.android.di.AppGraph.init(applicationContext) }
+
+        // 「自动」模式在电视设备上直接切换到 TV 版页面（否则会被当成大屏平板）
+        val mode = runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.javboss.android.di.AppGraph.settings.uiPrefs.first { true }.uiMode
+            }
+        }.getOrDefault("auto")
+        if ((mode.isBlank() || mode == "auto") && this.isTvDevice()) {
+            startActivity(android.content.Intent(this, TvMainActivity::class.java))
+            finish()
+            return
+        }
+
         applyPrivacyMode()
         enableEdgeToEdge()
         setContent {

@@ -39,9 +39,16 @@ fun UpdateCheckerHost() {
             mirror = prefs.updateMirror
             if (!prefs.autoCheckUpdate) return@withContext
 
+            // 配了网络代理 → 更新一律走 GitHub 直源（镜像在国内本来就慢/不通）
+            val hasProxy = runCatching { AppGraph.settings.netProxy() }.getOrNull() != null
+            if (hasProxy) {
+                mirror = ""
+                android.util.Log.i("JavBossUpdate", "net proxy configured → use GitHub direct for updates")
+            }
+
             // 1) 先静默测速（6 小时节流），自动应用最快镜像
             val now = System.currentTimeMillis()
-            if (now - prefs.updateMirrorLastTest > 6 * 3600_000L) {
+            if (!hasProxy && now - prefs.updateMirrorLastTest > 6 * 3600_000L) {
                 val apk = runCatching {
                     UpdateChecker.check(com.javboss.android.BuildConfig.VERSION_NAME).getOrNull()?.apkUrl
                 }.getOrNull()

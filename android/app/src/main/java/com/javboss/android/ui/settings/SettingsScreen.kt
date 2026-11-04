@@ -674,7 +674,8 @@ fun SettingsScreen(
                     checkingUpdate = true
                     updateResult = null
                     scope.launch {
-                        com.javboss.android.data.update.UpdateChecker
+                        com.javboss.android.data.update.UpdateInstaller.reset()
+                    com.javboss.android.data.update.UpdateChecker
                             .check(com.javboss.android.BuildConfig.VERSION_NAME)
                             .onSuccess { info ->
                                 if (info.hasUpdate) {
@@ -750,7 +751,7 @@ fun SettingsScreen(
         com.javboss.android.ui.update.UpdateDialog(
             info = info,
             currentVersion = com.javboss.android.BuildConfig.VERSION_NAME,
-            mirror = prefs.updateMirror,
+            mirror = if (prefs.netProxyHost.isNotBlank()) "" else prefs.updateMirror,
             onDismiss = { updateInfo = null },
         )
     }

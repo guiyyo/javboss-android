@@ -1,5 +1,6 @@
 package com.javboss.android.ui.nav
 
+import com.javboss.android.ui.common.isTvDevice
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -77,6 +78,7 @@ private sealed interface AuthState {
 fun AppRoot() {
     // 界面模式：自动 / 手机 / 平板 / 电视（电视模式直接渲染 TV 版 UI）
     val modePrefs by AppGraph.settings.uiPrefs.collectAsState(initial = com.javboss.android.data.settings.UiPrefs())
+    val isTv = androidx.compose.ui.platform.LocalContext.current.isTvDevice()
     when (modePrefs.uiMode) {
         "tv" -> {
             com.javboss.android.ui.tv.TvAppRoot()
@@ -94,6 +96,11 @@ fun AppRoot() {
             ) { AppRootContent() }
             return
         }
+    }
+    // 「自动」：电视设备（含智能电视 / 电视盒子）一律用 TV 版界面
+    if (isTv) {
+        com.javboss.android.ui.tv.TvAppRoot()
+        return
     }
     AppRootContent()
 }

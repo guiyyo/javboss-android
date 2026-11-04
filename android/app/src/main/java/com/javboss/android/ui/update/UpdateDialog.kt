@@ -2,6 +2,8 @@ package com.javboss.android.ui.update
 
 import android.content.Intent
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,16 +19,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -34,14 +37,14 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.javboss.android.data.update.ApkInstaller
 import com.javboss.android.data.update.UpdateChecker
+import com.javboss.android.data.update.UpdateInstaller
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 更新弹窗：展示完整更新说明（可滚动）→ App 内下载 APK → 自动调起系统安装器。
- *
- * [tvMode] 为 true 时（电视端），说明区域可用遥控器方向键 ↑↓ 滚动。
+ * 更新弹窗：说明可滚动；下载与安装交给 [UpdateInstaller]（应用级作用域），
+ * 弹窗关闭也不会中断，重新打开还能看到进度/结果。
  */
 @Composable
 fun UpdateDialog(
@@ -49,74 +52,59 @@ fun UpdateDialog(
     currentVersion: String,
     mirror: String = "",
     onDismiss: () -> Unit,
-    /** 启动提示里可「跳过此版本」，设置里传 null 表示不显示 */
     onSkipVersion: (() -> Unit)? = null,
     tvMode: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var downloading by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf<Float?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val installState by UpdateInstaller.state.collectAsState()
 
     val notesScroll = rememberScrollState()
     val notesFocus = remember { FocusRequester() }
 
-    // 电视端：弹窗打开后把焦点放到「更新内容」区域，方向键才能滚动
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    LaunchedEffect(Unit) {
         if (tvMode && info.notes.isNotBlank()) {
-            kotlinx.coroutines.delay(300)
+            delay(300)
             runCatching { notesFocus.requestFocus() }
         }
     }
-
-    fun start() {
-        val apk = info.apkUrl
-        if (apk == null) {
-            error = "该版本没有 APK 资源，请用「打开 Releases 页面」手动下载"
-            return
-        }
-        if (!ApkInstaller.canInstall(context)) {
-            val opened = ApkInstaller.openInstallPermission(context)
-            status = null
-            error = if (opened) {
-                "请在打开的设置里允许「安装未知应用 / 未知来源」，然后回来再点一次「下载并安装」"
-            } else {
-                "系统未开放安装权限页：请到电视「设置 → 安全/隐私 → 未知来源」允许安装，或用 U 盘/文件管理器安装下载好的 APK"
-            }
-            return
-        }
-        downloading = true
-        progress = null
-        error = null
-        status = "开始下载…"
-        scope.launch {
-            ApkInstaller.download(context, apk, mirror) { p ->
-                progress = p
-                status = if (p != null) "下载中 ${(p * 100).toInt()}%" else "下载中…"
-            }
-                .onSuccess { file ->
-                    status = "下载完成，正在调起安装器…"
-                    ApkInstaller.install(context, file)
-                        .onSuccess {
-                            downloading = false
-                            onDismiss()
-                        }
-                        .onFailure {
-                            downloading = false
-                            error = "调起安装器失败：${it.message}（可在 Releases 页面手动安装）"
-                        }
-                }
-                .onFailure {
-                    downloading = false
-                    error = "下载失败：${it.message}"
-                }
+    // 只有"本次弹窗内真的跑过下载"并成功后才自动关闭；
+    // 否则单例里遗留的旧状态会让新弹窗一出现就自动消失。
+    var sawRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(installState) {
+        val st = installState ?: return@LaunchedEffect
+        if (!st.done) sawRunning = true
+        if (sawRunning && st.done && st.error == null) {
+            delay(600)
+            onDismiss()
         }
     }
 
+    fun primaryAction() {
+        val st = installState
+        when {
+            st == null || st.done -> {
+                val apk = info.apkUrl
+                if (apk.isNullOrBlank()) {
+                    onDismiss()
+                } else {
+                    UpdateInstaller.start(context, apk, mirror, info.latestVersion)
+                }
+            }
+            st.readyToInstall -> UpdateInstaller.retryInstall(context)
+        }
+    }
+
+    val busy = installState?.done == false
+    val primaryLabel = when {
+        busy && installState?.readyToInstall == true -> "继续安装"
+        busy -> "下载中…"
+        installState?.readyToInstall == true -> "继续安装"
+        else -> "下载并安装"
+    }
+
     AlertDialog(
-        onDismissRequest = { if (!downloading) onDismiss() },
+        onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("发现新版本 v${info.latestVersion}") },
         text = {
             Column {
@@ -125,6 +113,32 @@ fun UpdateDialog(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                installState?.let { st ->
+                    Text(
+                        st.phase,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (st.error != null) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    st.error?.let { err ->
+                        Text(
+                            err,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    val p = st.progress
+                    if (p != null && p < 1f) {
+                        LinearProgressIndicator(
+                            progress = { p },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        )
+                    }
+                }
+
                 if (info.notes.isNotBlank()) {
                     Text(
                         if (tvMode) "更新内容（方向键 ↑↓ 滚动）" else "更新内容（上下滑动查看全部）",
@@ -135,14 +149,13 @@ fun UpdateDialog(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 340.dp)
+                            .heightIn(max = if (tvMode) 280.dp else 340.dp)
                             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
                             .then(if (tvMode) Modifier.focusable().focusRequester(notesFocus) else Modifier)
                             .onKeyEvent { ev ->
                                 if (!tvMode || ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                                 when (ev.key) {
                                     Key.DirectionUp -> {
-                                        // 已经到顶就放行，让焦点回到按钮
                                         if (notesScroll.value <= 0) return@onKeyEvent false
                                         scope.launch { notesScroll.animateScrollBy(-180f) }
                                         true
@@ -158,44 +171,14 @@ fun UpdateDialog(
                             .verticalScroll(notesScroll)
                             .padding(10.dp),
                     ) {
-                        Text(
-                            info.notes.trim(),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        Text(info.notes.trim(), style = MaterialTheme.typography.bodySmall)
                     }
-                }
-                status?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 10.dp),
-                    )
-                }
-                if (downloading) {
-                    val p = progress
-                    if (p != null && p > 0f) {
-                        LinearProgressIndicator(
-                            progress = { p },
-                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        )
-                    } else {
-                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-                    }
-                }
-                error?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { if (!downloading) start() }, enabled = !downloading) {
-                Text(if (downloading) "下载中…" else "下载并安装")
+            TextButton(onClick = { primaryAction() }, enabled = !busy) {
+                Text(primaryLabel)
             }
         },
         dismissButton = {
@@ -214,8 +197,8 @@ fun UpdateDialog(
                         }
                     },
                 ) { Text("浏览器打开") }
-                TextButton(onClick = { if (!downloading) onDismiss() }, enabled = !downloading) { Text("稍后") }
-                if (onSkipVersion != null && !downloading) {
+                TextButton(onClick = { if (!busy) onDismiss() }, enabled = !busy) { Text("稍后") }
+                if (onSkipVersion != null && !busy) {
                     TextButton(onClick = onSkipVersion) { Text("跳过此版本") }
                 }
             }
