@@ -61,6 +61,10 @@ fun SubtitlePanel(
     onUseEmbedded: () -> Unit,
     onToggleSkip: (Boolean) -> Unit,
     onOpenPicker: () -> Unit,
+    /** 内嵌轨是否真的输出过字幕文字（假轨时不显示「内嵌 N」） */
+    embeddedHasCue: Boolean = false,
+    /** 手动确认「本片确实有内嵌字幕」（自动探测抓不到时用） */
+    onConfirmEmbedded: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val wDim = Color.White.copy(alpha = 0.72f)
@@ -118,10 +122,16 @@ fun SubtitlePanel(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            DarkChip(if (embeddedCount > 0) "内嵌 $embeddedCount" else "无内嵌", usingEmbedded, embeddedCount > 0) {
+            val realEmbedded = embeddedCount > 0 && embeddedHasCue
+            DarkChip(
+                if (realEmbedded) "内嵌 $embeddedCount" else "无内嵌",
+                usingEmbedded,
+                realEmbedded,
+            ) {
                 onUseEmbedded()
             }
             DarkChip("本片无需字幕", skipped, true) { onToggleSkip(!skipped) }
+
         }
 
         // 选字幕单独一屏，避免这个小块塞太满

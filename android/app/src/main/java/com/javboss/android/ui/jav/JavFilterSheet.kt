@@ -48,6 +48,7 @@ import com.javboss.android.di.AppGraph
  */
 private enum class FilterPage(val title: String) {
     Root("筛选"),
+    Subtitle("字幕状态"),
     Watched("观看状态"),
     Type("作品类型"),
     Prefix("番号前缀"),
@@ -65,6 +66,10 @@ fun JavFilterSheet(
     initial: JavQuery,
     onDismiss: () -> Unit,
     onApply: (JavQuery) -> Unit,
+    subtitleFilter: com.javboss.android.ui.jav.SubtitleFilter =
+        com.javboss.android.ui.jav.SubtitleFilter.ALL,
+    subtitleStats: List<Int> = listOf(0, 0, 0, 0),
+    onSubtitleFilter: (com.javboss.android.ui.jav.SubtitleFilter) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var options by remember { mutableStateOf<JavFilterOptions?>(null) }
@@ -110,6 +115,7 @@ fun JavFilterSheet(
     )
 
     fun summaryFor(p: FilterPage): String = when (p) {
+        FilterPage.Subtitle -> subtitleFilter.label
         FilterPage.Watched -> when (watchedState) {
             "watched" -> "已播放"
             "unwatched" -> "未播放"
@@ -157,6 +163,7 @@ fun JavFilterSheet(
                     val opts = options
                     LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
                         val entries = listOf(
+                            FilterPage.Subtitle,
                             FilterPage.Watched,
                             FilterPage.Type,
                             FilterPage.Favorite,
@@ -196,6 +203,49 @@ fun JavFilterSheet(
                     }
                 }
 
+                page == FilterPage.Subtitle -> {
+                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                        items(
+                            listOf(
+                                com.javboss.android.ui.jav.SubtitleFilter.ALL,
+                                com.javboss.android.ui.jav.SubtitleFilter.HAS,
+                                com.javboss.android.ui.jav.SubtitleFilter.NO_SUBTITLE,
+                                com.javboss.android.ui.jav.SubtitleFilter.NO_NEED,
+                            ),
+                        ) { f ->
+                            val count = when (f) {
+                                com.javboss.android.ui.jav.SubtitleFilter.ALL -> null
+                                com.javboss.android.ui.jav.SubtitleFilter.HAS -> subtitleStats.getOrElse(0) { 0 }
+                                com.javboss.android.ui.jav.SubtitleFilter.NO_SUBTITLE -> subtitleStats.getOrElse(1) { 0 }
+                                com.javboss.android.ui.jav.SubtitleFilter.NO_NEED -> subtitleStats.getOrElse(2) { 0 }
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSubtitleFilter(f); page = FilterPage.Root }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(f.label, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = count?.let { "$it 部" } ?: "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (subtitleFilter == f) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f).padding(start = 10.dp),
+                                )
+                                if (subtitleFilter == f) {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 else -> {
                     // 二级/三级：搜索 + 待选项
                     val opts = options
@@ -209,6 +259,7 @@ fun JavFilterSheet(
                         )
                         LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                             when (page) {
+                                FilterPage.Subtitle -> { /* 已在上方单独处理 */ }
                                 FilterPage.Watched -> {
                                     val choices = listOf(
                                         null to "全部",
@@ -392,7 +443,21 @@ fun JavFilterSheet(
             ) {
                 TextButton(
                     onClick = {
-                        onApply(initial.copy(soloOnly = false, prefix = null, idolIds = emptyList(), tagIds = emptyList(), studioId = null, seriesId = null, ratingMin = null, ratingMax = null, watchedState = null, favoriteGroupId = null))
+                        onSubtitleFilter(com.javboss.android.ui.jav.SubtitleFilter.ALL)
+                        onApply(
+                            initial.copy(
+                                soloOnly = false,
+                                prefix = null,
+                                idolIds = emptyList(),
+                                tagIds = emptyList(),
+                                studioId = null,
+                                seriesId = null,
+                                ratingMin = null,
+                                ratingMax = null,
+                                watchedState = null,
+                                favoriteGroupId = null,
+                            ),
+                        )
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f),

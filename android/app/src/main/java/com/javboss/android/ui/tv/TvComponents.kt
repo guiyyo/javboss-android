@@ -117,6 +117,8 @@ fun TvPosterCard(
     meta: String? = null,
     /** 标题最大行数（跟随网页 jav_title_max_rows） */
     titleRows: Int = 2,
+    /** 番号（用于字幕角标；传 null 不显示） */
+    subtitleCode: String? = null,
     /** 焦点记忆：返回该页时把焦点还原到这一项 */
     focusKey: String? = null,
     focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
@@ -167,6 +169,12 @@ fun TvPosterCard(
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = Color.White.copy(alpha = 0.25f),
                         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                    )
+                }
+                if (!subtitleCode.isNullOrBlank()) {
+                    com.javboss.android.ui.jav.SubtitleBadge(
+                        code = subtitleCode,
+                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
                     )
                 }
                 if (subtitle != null) {

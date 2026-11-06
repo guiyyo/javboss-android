@@ -286,7 +286,10 @@ fun JavListScreen(
         when {
             vm.loading && vm.items.isEmpty() -> LoadingBox(Modifier.weight(1f))
             vm.error != null && vm.items.isEmpty() -> ErrorBox(vm.error!!, onRetry = vm::refresh, modifier = Modifier.weight(1f))
-            vm.items.isEmpty() -> EmptyBox("没有符合条件的作品", modifier = Modifier.weight(1f))
+            vm.itemsFiltered.isEmpty() -> EmptyBox(
+                if (vm.subtitleFilter == SubtitleFilter.ALL) "没有符合条件的作品" else "没有「${vm.subtitleFilter.label}」的作品",
+                modifier = Modifier.weight(1f),
+            )
             else -> Box(Modifier.weight(1f)) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(
@@ -320,7 +323,7 @@ fun JavListScreen(
                         }
                     }
                 }
-                items(vm.items, key = { it.id }) { item ->
+                items(vm.itemsFiltered, key = { it.id }) { item ->
                     JavCard(
                         item = item,
                         coverUrl = "${baseUrl.trimEnd('/')}/jav/${item.code}/cover",
@@ -406,6 +409,9 @@ fun JavListScreen(
     if (filterOpen) {
         JavFilterSheet(
             initial = vm.query,
+            subtitleFilter = vm.subtitleFilter,
+            subtitleStats = vm.subtitleStats(),
+            onSubtitleFilter = { vm.applySubtitleFilter(it) },
             onDismiss = { filterOpen = false },
             onApply = { newQuery ->
                 searchText = newQuery.search
@@ -500,16 +506,23 @@ fun JavCard(
                     modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
                 )
             }
+            // 字幕角标：统一放左上角（多选模式隐藏，避免与勾选框叠在一起）
+            if (!selectionMode) {
+                SubtitleBadge(
+                    code = item.code,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                )
+            }
             if (item.isUncensored == true) {
                 Text(
                     text = "无码",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = Color.White,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(10.dp)
-                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                        .padding(8.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }
         }
@@ -571,6 +584,14 @@ private fun ContinueWatchingCard(
                 url = "${baseUrl.trimEnd('/')}/videos/${video.id}/thumbnail",
                 modifier = Modifier.fillMaxSize(),
             )
+            // 字幕角标：左上角（右上角是时长），小卡片用 dense 样式
+            video.jav?.code?.let { code ->
+                SubtitleBadge(
+                    code = code,
+                    dense = true,
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                )
+            }
             val ratio = watchedRatio(video.watchedMs, video.durationSec)
             LinearProgressIndicator(
                 progress = { ratio },

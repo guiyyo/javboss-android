@@ -32,7 +32,7 @@ class SettingsStore(private val context: Context) {
         val GRID_COLUMNS = stringPreferencesKey("grid_columns")
     }
 
-    val serverUrl: Flow<String> = context.dataStore.data.map { it[Keys.SERVER_URL] ?: DEFAULT_SERVER_URL }
+    val serverUrl: Flow<String> = context.dataStore.data.map { it[Keys.SERVER_URL] ?: "" }
 
     val sessionCookie: Flow<String?> = context.dataStore.data.map { it[Keys.SESSION_COOKIE] }
 
@@ -107,6 +107,7 @@ class SettingsStore(private val context: Context) {
             netProxyPort = p[UiPrefsKeys.NET_PROXY_PORT] ?: 7890,
             netProxyType = p[UiPrefsKeys.NET_PROXY_TYPE] ?: "http",
             subtitleChineseOnly = p[UiPrefsKeys.SUBTITLE_CHINESE_ONLY] ?: true,
+            subtitleLangOrder = p[UiPrefsKeys.SUBTITLE_LANG_ORDER] ?: "zh-Hans,zh-Hant,zh",
             autoCheckUpdate = p[UiPrefsKeys.AUTO_CHECK_UPDATE] ?: true,
             updateMirror = p[UiPrefsKeys.UPDATE_MIRROR] ?: "",
             updateMirrorLastTest = p[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] ?: 0L,
@@ -155,6 +156,9 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setUpdateSkippedVersion(value: String) =
         context.dataStore.edit { it[UiPrefsKeys.UPDATE_SKIPPED_VERSION] = value }
+
+    suspend fun setSubtitleLangOrder(value: String) =
+        context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_LANG_ORDER] = value }
 
     suspend fun setSubtitleChineseOnly(value: Boolean) =
         context.dataStore.edit { it[UiPrefsKeys.SUBTITLE_CHINESE_ONLY] = value }
@@ -238,8 +242,12 @@ class SettingsStore(private val context: Context) {
 
     suspend fun subtitleSkipped(code: String): Boolean = playback.subtitleSkipped(code)
 
-    suspend fun setSubtitleSkipped(code: String, value: Boolean) =
+    suspend fun setSubtitleSkipped(code: String, value: Boolean) {
         playback.setSubtitleSkipped(code, value)
+        runCatching {
+            com.javboss.android.data.subtitle.SubtitleIndex.setNoNeed(code, value)
+        }
+    }
 
     suspend fun setTvPinEnabled(value: Boolean) =
         context.dataStore.edit { it[UiPrefsKeys.TV_PIN_ENABLED] = value }
@@ -311,6 +319,7 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[UiPrefsKeys.IDOL_PREFER_CHINESE] = value }
 
     companion object {
-        const val DEFAULT_SERVER_URL = "http://192.168.1.1:8655"
+        /** 仅用于界面示例提示，不作为默认值（本项目是自建服务端，地址因人而异） */
+        const val EXAMPLE_SERVER_URL = "http://192.168.1.1:8655"
     }
 }

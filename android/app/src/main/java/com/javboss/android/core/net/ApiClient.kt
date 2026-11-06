@@ -81,7 +81,8 @@ object ApiClient {
 
     fun normalizeBaseUrl(raw: String): String {
         var url = raw.trim()
-        if (url.isEmpty()) url = "http://192.168.1.1:8655"
+        // 不要回落到任何写死的地址：本项目是自建服务端，地址必须由用户填写
+        require(url.isNotEmpty()) { "未配置服务器地址，请先在登录页填写（例如 http://192.168.1.1:8655）" }
         if (!url.startsWith("http://") && !url.startsWith("https://")) url = "http://$url"
         if (!url.endsWith("/")) url = "$url/"
         return url

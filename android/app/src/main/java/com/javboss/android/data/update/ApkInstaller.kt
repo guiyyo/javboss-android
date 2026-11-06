@@ -30,13 +30,13 @@ object ApkInstaller {
         runCatching {
             val started = System.currentTimeMillis()
             val realUrl = UpdateMirror.wrap(url, mirror)
-            android.util.Log.i("JavBossUpdate", "download: $realUrl")
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "download: $realUrl")
             val dir = apkDir(context)
             // 清掉旧包，避免占用空间
             dir.listFiles()?.forEach { it.delete() }
             val target = File(dir, fileName)
             val proxy = com.javboss.android.core.net.NetProxySupport.current()
-            android.util.Log.i(
+            com.javboss.android.core.log.AppLog.i(
                 "JavBossUpdate",
                 "download via proxy=" + (proxy?.address()?.toString() ?: "direct") + " url=" + realUrl,
             )
@@ -69,13 +69,58 @@ object ApkInstaller {
                 }
             }
             if (target.length() < 1024 * 100) error("安装包异常（${target.length()} 字节）")
+
+            // 完整性校验：Release 若提供 `<apk>.sha256` 则比对；缺失时跳过（不阻塞安装）
+            verifySha256(target, realUrl, mirror, proxy)
+
             onProgress(1f)
-            android.util.Log.i("JavBossUpdate", "download done: ${target.absolutePath} ${target.length()}B")
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "download done: ${target.absolutePath} ${target.length()}B")
             target
         }
     }
 
     /** 是否已授权「安装未知来源应用」 */
+    /**
+     * 校验 APK 的 SHA-256：Release 旁提供 `<apk 文件名>.sha256`（十六进制）。
+     * 找不到该文件时只记日志、不阻塞安装（兼容历史版本）。
+     */
+    private fun verifySha256(file: File, apkUrl: String, mirror: String, proxy: java.net.Proxy?) {
+        runCatching {
+            val shaUrl = UpdateMirror.wrap("$apkUrl.sha256", mirror)
+            val client = com.javboss.android.core.net.NetProxySupport.build(
+                proxy = proxy, connectSeconds = 10, readSeconds = 20, callSeconds = 30,
+            )
+            val req = Request.Builder().url(shaUrl).header("User-Agent", "JavBoss-Android").build()
+            val expected = client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@runCatching
+                val raw = (resp.body?.string() ?: "").trim()
+                raw.filter { c -> c.isLetterOrDigit() }.take(64)
+            }
+            if (expected.length < 32) {
+                com.javboss.android.core.log.AppLog.i("JavBossUpdate", "sha256: 未提供校验文件，跳过")
+                return@runCatching
+            }
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val actual = file.inputStream().use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    md.update(buf, 0, n)
+                }
+                md.digest().joinToString("") { "%02x".format(it) }
+            }
+            if (!actual.equals(expected, ignoreCase = true)) {
+                com.javboss.android.core.log.AppLog.e("JavBossUpdate", "sha256 不匹配 expected=" + expected + " actual=" + actual)
+                runCatching { file.delete() }
+                error("安装包校验失败（SHA-256 不匹配），请重试或到 Releases 手动下载")
+            }
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "sha256 ok: " + actual)
+        }.onFailure { e ->
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "sha256 校验跳过：" + (e.message ?: ""))
+        }
+    }
+
     fun canInstall(context: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.packageManager.canRequestPackageInstalls()
@@ -146,7 +191,7 @@ object ApkInstaller {
 
         InstallSessionBridge.reset()
         val sessionId = installer.createSession(params)
-        android.util.Log.i("JavBossUpdate", "install session created: $sessionId")
+        com.javboss.android.core.log.AppLog.i("JavBossUpdate", "install session created: $sessionId")
         try {
             installer.openSession(sessionId).use { session ->
                 file.inputStream().use { input ->
@@ -161,17 +206,17 @@ object ApkInstaller {
                     android.app.PendingIntent.FLAG_MUTABLE
                 val pending = android.app.PendingIntent.getBroadcast(context, sessionId, resultIntent, flags)
                 session.commit(pending.intentSender)
-                android.util.Log.i("JavBossUpdate", "install session committed, waiting for answer…")
+                com.javboss.android.core.log.AppLog.i("JavBossUpdate", "install session committed, waiting for answer…")
             }
 
             // 等第一次应答（8 秒）
             val first = kotlinx.coroutines.withTimeoutOrNull(8_000) {
                 InstallSessionBridge.status.first { it != null }
             }
-            android.util.Log.i("JavBossUpdate", "session first answer: $first")
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "session first answer: $first")
             when (first) {
                 null -> {
-                    android.util.Log.w("JavBossUpdate", "no answer in 8s, abandoning session $sessionId")
+                    com.javboss.android.core.log.AppLog.w("JavBossUpdate", "no answer in 8s, abandoning session $sessionId")
                     runCatching { installer.abandonSession(sessionId) }
                     error("系统未响应安装会话（可能被固件拦截）")
                 }
@@ -183,7 +228,7 @@ object ApkInstaller {
                             it != null && it != android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION
                         }
                     }
-                    android.util.Log.i("JavBossUpdate", "session final answer: $final")
+                    com.javboss.android.core.log.AppLog.i("JavBossUpdate", "session final answer: $final")
                     when (final) {
                         null -> error("等待用户确认超时")
                         android.content.pm.PackageInstaller.STATUS_SUCCESS -> Unit
@@ -202,7 +247,7 @@ object ApkInstaller {
     suspend fun install(context: Context, file: File): Result<Unit> {
         val sessionResult = runCatching { installViaSession(context, file).getOrThrow() }
         if (sessionResult.isSuccess) return sessionResult
-        android.util.Log.w(
+        com.javboss.android.core.log.AppLog.w(
             "JavBossUpdate",
             "session install failed: ${sessionResult.exceptionOrNull()?.message}，回退 ACTION_VIEW",
         )
@@ -222,13 +267,13 @@ object ApkInstaller {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val canView = context.packageManager.resolveActivity(view, 0) != null
-        android.util.Log.i(
+        com.javboss.android.core.log.AppLog.i(
             "JavBossUpdate",
             "intent install: canInstall=" + canInstall(context) + " canView=" + canView,
         )
         if (canView) {
             context.startActivity(view)
-            android.util.Log.i("JavBossUpdate", "intent install: ACTION_VIEW fired")
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "intent install: ACTION_VIEW fired")
         } else {
             val legacy = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
                 data = uri
@@ -237,7 +282,7 @@ object ApkInstaller {
                 putExtra("android.intent.extra.NOT_UNKNOWN_SOURCES", true)
             }
             context.startActivity(legacy)
-            android.util.Log.i("JavBossUpdate", "intent install: ACTION_INSTALL_PACKAGE fired")
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "intent install: ACTION_INSTALL_PACKAGE fired")
         }
     }
 
@@ -263,7 +308,7 @@ object ApkInstaller {
         if (!dir.exists()) dir.mkdirs()
         val target = File(dir, file.name)
         file.copyTo(target, overwrite = true)
-        android.util.Log.i("JavBossUpdate", "exported apk -> ${target.absolutePath}")
+        com.javboss.android.core.log.AppLog.i("JavBossUpdate", "exported apk -> ${target.absolutePath}")
         target.absolutePath
     }.getOrNull()
 }

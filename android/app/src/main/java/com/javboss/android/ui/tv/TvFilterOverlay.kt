@@ -50,6 +50,7 @@ private enum class TvFilterPage(val title: String, val searchable: Boolean) {
     Idol("女优", true),
     Tag("标签", true),
     Favorite("收藏夹", true),
+    Subtitle("字幕", false),
 }
 
 @Composable
@@ -57,6 +58,10 @@ fun TvFilterOverlay(
     initial: JavQuery,
     onDismiss: () -> Unit,
     onApply: (JavQuery) -> Unit,
+    subtitleFilter: com.javboss.android.ui.jav.SubtitleFilter =
+        com.javboss.android.ui.jav.SubtitleFilter.ALL,
+    subtitleStats: List<Int> = listOf(0, 0, 0),
+    onSubtitleFilter: (com.javboss.android.ui.jav.SubtitleFilter) -> Unit = {},
 ) {
     var options by remember { mutableStateOf<JavFilterOptions?>(null) }
     var page by remember { mutableStateOf(TvFilterPage.Type) }
@@ -89,6 +94,7 @@ fun TvFilterOverlay(
         TvFilterPage.Idol -> if (idolIds.isEmpty()) "全部" else "${idolIds.size} 项"
         TvFilterPage.Tag -> if (tagIds.isEmpty()) "全部" else "${tagIds.size} 项"
         TvFilterPage.Favorite -> favoriteGroups.firstOrNull { it.id == favoriteGroupId }?.name ?: "全部"
+        TvFilterPage.Subtitle -> subtitleFilter.label
     }
 
     fun apply() {
@@ -113,6 +119,20 @@ fun TvFilterOverlay(
         tagIds.clear()
         favoriteGroupId = null
         search = ""
+        // 字幕维度也要一起清掉，并且立即生效（否则筛选后的清空看起来没反应）
+        onSubtitleFilter(com.javboss.android.ui.jav.SubtitleFilter.ALL)
+        onApply(
+            initial.copy(
+                soloOnly = false,
+                studioId = null,
+                seriesId = null,
+                idolIds = emptyList(),
+                tagIds = emptyList(),
+                favoriteGroupId = null,
+                search = "",
+            ),
+        )
+        onDismiss()
     }
 
     Box(
@@ -242,6 +262,23 @@ fun TvFilterOverlay(
                             modifier = Modifier.fillMaxWidth().weight(1f),
                         ) {
                             when (page) {
+                                TvFilterPage.Subtitle -> {
+                                    items(
+                                        listOf(
+                                            com.javboss.android.ui.jav.SubtitleFilter.ALL to "全部",
+                                            com.javboss.android.ui.jav.SubtitleFilter.HAS to
+                                                "已匹配（${subtitleStats.getOrElse(0) { 0 }} 部）",
+                                            com.javboss.android.ui.jav.SubtitleFilter.NO_SUBTITLE to
+                                                "无字幕（${subtitleStats.getOrElse(1) { 0 }} 部）",
+                                            com.javboss.android.ui.jav.SubtitleFilter.NO_NEED to
+                                                "无需字幕（${subtitleStats.getOrElse(2) { 0 }} 部）",
+                                        ),
+                                    ) { pair ->
+                                        TvFilterOptionRow(pair.second, subtitleFilter == pair.first) {
+                                            onSubtitleFilter(pair.first)
+                                        }
+                                    }
+                                }
                                 TvFilterPage.Type -> {
                                     items(
                                         listOf(

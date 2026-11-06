@@ -134,7 +134,7 @@ private fun AppRootContent() {
         } else {
             AuthState.LoggedOut
         }
-        android.util.Log.i("JavBossAuth", "startup status=$status → $authState")
+        com.javboss.android.core.log.AppLog.i("JavBossAuth", "startup status=$status → $authState")
     }
 
 
@@ -407,6 +407,7 @@ private fun MainScaffoldInner(navController: androidx.navigation.NavHostControll
                     onOpenTags = { navController.navigate("tags") },
                     onOpenFavorites = { navController.navigate("favorites") },
                     onOpenAccount = { navController.navigate("account") },
+                    onOpenSubtitleFill = { navController.navigate("subtitle-fill") },
 
                 )
             }
@@ -440,6 +441,11 @@ private fun MainScaffoldInner(navController: androidx.navigation.NavHostControll
             composable("resources") { ResourceScreen(onBack = { navController.popBackStack() }) }
             composable("providers") { ProviderScreen(onBack = { navController.popBackStack() }) }
             composable("downloader") { DownloaderSettingsScreen(onBack = { navController.popBackStack() }) }
+            composable("subtitle-fill") {
+                com.javboss.android.ui.settings.SubtitleFillScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
     }
 }

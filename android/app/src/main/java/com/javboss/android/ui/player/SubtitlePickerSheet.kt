@@ -167,7 +167,7 @@ fun SubtitlePickerSheet(
 
     fun load(c: SubtitleCandidate) {
         if (loadingId != null) return
-        android.util.Log.i("JavBossSub", "picker load clicked: ${c.title}")
+        com.javboss.android.core.log.AppLog.i("JavBossSub", "picker load clicked: ${c.title}")
         loadingId = c.id
         progress = null
         justLoaded = false

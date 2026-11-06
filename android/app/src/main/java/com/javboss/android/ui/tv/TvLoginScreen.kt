@@ -53,6 +53,25 @@ fun TvLoginScreen(
                 label = "服务器地址",
                 modifier = Modifier.fillMaxWidth(),
             )
+            // 没写端口时提醒（电视上没有键盘提示，容易漏）
+            if (vm.serverUrl.isNotBlank() && !vm.hasExplicitPort) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "没写端口，JavBoss 默认 8655",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TvFocusable(onClick = { vm.applyDefaultPort() }, shape = RoundedCornerShape(10.dp)) {
+                        Text(
+                            "补上 :8655",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
             TvInputField(
                 value = vm.password,
                 onValueChange = vm::onPasswordChange,
@@ -66,6 +85,13 @@ fun TvLoginScreen(
                 TvFocusable(onClick = { showKey = !showKey }, shape = RoundedCornerShape(12.dp)) {
                     Text(
                         if (showKey) "隐藏密钥" else "显示密钥",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                TvFocusable(onClick = { vm.testConnection() }, shape = RoundedCornerShape(12.dp)) {
+                    Text(
+                        if (vm.testing) "测试中…" else "测试连接",
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -87,6 +113,13 @@ fun TvLoginScreen(
 
             vm.error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            vm.testResult?.let {
+                Text(
+                    it,
+                    color = if (vm.testOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
 
             androidx.compose.runtime.LaunchedEffect(vm.loggedIn) {

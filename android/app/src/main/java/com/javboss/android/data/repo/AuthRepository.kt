@@ -21,6 +21,10 @@ class AuthRepository(private val settings: SettingsStore) {
 
     suspend fun status(): ApiResult<AuthStatus> = apiCall { api().authStatus() }
 
+    /** 用指定地址探测服务端是否可达（不保存地址、不影响现有会话） */
+    suspend fun health(serverUrl: String): ApiResult<com.javboss.android.data.model.StatusResponse> =
+        apiCall { ApiClient.createApi(serverUrl, JavBossApi::class.java).health() }
+
     suspend fun login(serverUrl: String, password: String): ApiResult<AuthStatus> {
         settings.setServerUrl(serverUrl)
         return apiCall { api().login(LoginRequest(password)) }

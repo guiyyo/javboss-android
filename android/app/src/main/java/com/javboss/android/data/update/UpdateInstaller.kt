@@ -60,7 +60,7 @@ object UpdateInstaller {
             val ver = apkVersion(context, cached)
             val ok = ver != null && expectedName.isNotBlank() && ver.second == expectedName
             if (!ok) {
-                android.util.Log.w(
+                com.javboss.android.core.log.AppLog.w(
                     "JavBossUpdate",
                     "cached apk version mismatch: " + ver + " expected=" + expectedName + "，删除后重新下载",
                 )
@@ -68,7 +68,7 @@ object UpdateInstaller {
             }
         }
         if (cached.exists() && cached.length() > 1_000_000) {
-            android.util.Log.i("JavBossUpdate", "reuse cached apk: ${cached.length()}B")
+            com.javboss.android.core.log.AppLog.i("JavBossUpdate", "reuse cached apk: ${cached.length()}B")
             _state.value = State(
                 phase = "使用已下载的安装包，正在调起安装器…",
                 progress = 1f,
@@ -96,7 +96,7 @@ object UpdateInstaller {
                         // 下载完成后校验版本，避免装到旧包/错误包
                         val ver = apkVersion(context, file)
                         if (expectedVersion.isNotBlank() && ver != null && ver.second != expectedVersion) {
-                            android.util.Log.w(
+                            com.javboss.android.core.log.AppLog.w(
                                 "JavBossUpdate",
                                 "downloaded apk version mismatch: " + ver + " expected=" + expectedVersion,
                             )
@@ -116,7 +116,7 @@ object UpdateInstaller {
                         // 另存一份到应用外部目录，方便电视手动安装
                         runCatching { ApkInstaller.exportToAppDir(context, file) }
                             .onSuccess { path ->
-                                android.util.Log.i("JavBossUpdate", "exported copy -> $path")
+                                com.javboss.android.core.log.AppLog.i("JavBossUpdate", "exported copy -> $path")
                             }
                         install(context, file)
                     }
@@ -150,16 +150,16 @@ object UpdateInstaller {
         // 注意：MIUI TV 上 canRequestPackageInstalls() 始终返回 false（即使系统里已允许未知来源），
         // 所以这里只记录、不拦路——直接尝试安装，失败再提示手动安装。
         val canInstall = runCatching { ApkInstaller.canInstall(context) }.getOrDefault(false)
-        android.util.Log.i("JavBossUpdate", "install: canRequestPackageInstalls=$canInstall（仅参考，不拦截）")
+        com.javboss.android.core.log.AppLog.i("JavBossUpdate", "install: canRequestPackageInstalls=$canInstall（仅参考，不拦截）")
         _state.value = _state.value?.copy(phase = "正在调起安装器…")
         scope.launch {
             ApkInstaller.install(context, file)
                 .onSuccess {
-                    android.util.Log.i("JavBossUpdate", "install requested ok")
+                    com.javboss.android.core.log.AppLog.i("JavBossUpdate", "install requested ok")
                     _state.value = _state.value?.copy(phase = "已调起安装，请在电视上确认", done = true)
                 }
                 .onFailure { e ->
-                    android.util.Log.w("JavBossUpdate", "install failed: ${e.message}")
+                    com.javboss.android.core.log.AppLog.w("JavBossUpdate", "install failed: ${e.message}")
                     val exported = runCatching { ApkInstaller.exportToAppDir(context, file) }.getOrNull()
                     _state.value = _state.value?.copy(
                         phase = "安装失败",

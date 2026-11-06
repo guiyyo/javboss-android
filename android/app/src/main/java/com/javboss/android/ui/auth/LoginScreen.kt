@@ -19,6 +19,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -75,6 +77,29 @@ fun LoginScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
+        Text(
+            "填你自己 JavBoss 服务端的地址（含端口），例如 http://192.168.1.1:8655",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        )
+        // 没写端口时提醒并支持一键补 8655（连不上最常见的原因之一）
+        if (vm.serverUrl.isNotBlank() && !vm.hasExplicitPort) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 2.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Text(
+                    "没有写端口，JavBoss 默认是 8655",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { vm.applyDefaultPort() }) {
+                    Text("补上 :8655", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
@@ -105,6 +130,16 @@ fun LoginScreen(
             )
         }
 
+        // 测试连接（只探 /healthz，不换会话）
+        vm.testResult?.let { msg ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = msg,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (vm.testOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            )
+        }
+
         Spacer(Modifier.height(24.dp))
         Button(
             onClick = vm::submit,
@@ -120,6 +155,14 @@ fun LoginScreen(
             } else {
                 Text("登录")
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        androidx.compose.material3.OutlinedButton(
+            onClick = vm::testConnection,
+            enabled = !vm.testing,
+            modifier = Modifier.fillMaxWidth().height(44.dp),
+        ) {
+            Text(if (vm.testing) "测试中…" else "测试连接")
         }
         Spacer(Modifier.height(16.dp))
         Text(

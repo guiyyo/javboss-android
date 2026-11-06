@@ -30,6 +30,14 @@ val JavSortOptions = listOf(
     JavSortOption("favorite_rating_asc", "喜爱度↑"),
 )
 
+/** 字幕筛选维度（S6） */
+enum class SubtitleFilter(val label: String) {
+    ALL("全部"),
+    HAS("已匹配"),
+    NO_SUBTITLE("无字幕"),
+    NO_NEED("无需字幕"),
+}
+
 class JavListViewModel : ViewModel() {
 
     var query by mutableStateOf(JavQuery())
@@ -46,6 +54,42 @@ class JavListViewModel : ViewModel() {
         private set
     var endReached by mutableStateOf(false)
         private set
+
+    /** 字幕维度筛选（客户端过滤当前已加载条目） */
+    var subtitleFilter by mutableStateOf(SubtitleFilter.ALL)
+        private set
+
+    /** 改名避免与属性 setter 的 JVM 签名冲突 */
+    fun applySubtitleFilter(value: SubtitleFilter) {
+        subtitleFilter = value
+    }
+
+    /** 应用字幕筛选后的条目 */
+    val itemsFiltered: List<JavItem>
+        get() {
+            if (subtitleFilter == SubtitleFilter.ALL) return items
+            return items.filter { item -> matchesFilter(item.code) }
+        }
+
+    private fun matchesFilter(code: String?): Boolean {
+        val st = com.javboss.android.data.subtitle.SubtitleIndex.get(code)
+        return when (subtitleFilter) {
+            SubtitleFilter.ALL -> true
+            SubtitleFilter.HAS -> st?.hasSubtitle == true
+            SubtitleFilter.NO_SUBTITLE -> st?.noSubtitle == true
+            SubtitleFilter.NO_NEED -> st?.noNeedSubtitle == true
+        }
+    }
+
+    /** 当前已加载条目的字幕统计：已配 / 缺字幕 / 无需字幕 */
+    /**
+     * 全库口径统计：已配 / 缺字幕 / 无字幕 / 无需字幕
+     * 「缺字幕」= 全库总数 - 已配 - 无字幕 - 无需（未处理的全部算缺字幕）
+     */
+    fun subtitleStats(): List<Int> {
+        val (online, noSub, noNeed) = com.javboss.android.data.subtitle.SubtitleIndex.counts()
+        return listOf(online, noSub, noNeed)
+    }
 
     var favoriteGroups by mutableStateOf<List<FavoriteGroup>>(emptyList())
         private set
@@ -247,7 +291,7 @@ class JavListViewModel : ViewModel() {
             }
             // 本地筛选时用已加载的匹配数作为总数，避免显示服务端总数造成误解
             total = if (query.watchedState != null) collected.size.toLong() else serverTotal
-            android.util.Log.d("JavBossFilter", "refresh watched=${query.watchedState} collected=${collected.size} serverTotal=$serverTotal")
+            com.javboss.android.core.log.AppLog.d("JavBossFilter", "refresh watched=${query.watchedState} collected=${collected.size} serverTotal=$serverTotal")
             loading = false
             if (pendingRefresh) {
                 pendingRefresh = false

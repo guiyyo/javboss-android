@@ -677,6 +677,7 @@ fun PlayerScreen(
                     currentName = vm.state.subtitleName,
                     currentOffsetMs = vm.state.subtitleOffsetMs,
                     embeddedCount = vm.state.embeddedSubtitleCount,
+                    embeddedHasCue = vm.state.embeddedHasCue,
                     usingEmbedded = vm.state.usingEmbeddedSubtitle,
                     skipped = skippedMarked,
                     onDismiss = { showSubtitle = false },

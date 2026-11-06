@@ -10,7 +10,7 @@ class InstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         val status = intent?.getIntExtra(PackageInstaller.EXTRA_STATUS, -999) ?: -999
         val msg = intent?.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
-        android.util.Log.i("JavBossUpdate", "install session result: status=$status msg=$msg")
+        com.javboss.android.core.log.AppLog.i("JavBossUpdate", "install session result: status=$status msg=$msg")
         InstallSessionBridge.status.value = status
 
         // 关键：部分系统（含 MIUI TV）不会自动弹确认框，需要由接收方拉起 EXTRA_INTENT
@@ -25,12 +25,12 @@ class InstallResultReceiver : BroadcastReceiver() {
                 runCatching {
                     confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     context.startActivity(confirm)
-                    android.util.Log.i("JavBossUpdate", "install confirm activity launched")
+                    com.javboss.android.core.log.AppLog.i("JavBossUpdate", "install confirm activity launched")
                 }.onFailure {
-                    android.util.Log.w("JavBossUpdate", "launch confirm failed: ${it.message}")
+                    com.javboss.android.core.log.AppLog.w("JavBossUpdate", "launch confirm failed: ${it.message}")
                 }
             } else {
-                android.util.Log.w("JavBossUpdate", "PENDING_USER_ACTION but no EXTRA_INTENT")
+                com.javboss.android.core.log.AppLog.w("JavBossUpdate", "PENDING_USER_ACTION but no EXTRA_INTENT")
             }
         }
     }

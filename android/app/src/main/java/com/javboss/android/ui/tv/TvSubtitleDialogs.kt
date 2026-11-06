@@ -157,7 +157,7 @@ fun TvSubtitleSearchDialog(
                 resultBanner = "✖ 加载失败"
                 error = st.error
                 status = null
-                android.util.Log.w("JavBossSub", "UI shows failure: ${st.error}")
+                com.javboss.android.core.log.AppLog.w("JavBossSub", "UI shows failure: ${st.error}")
             } else {
                 resultBanner = "✔ 已加载：${st.title}"
                 status = "已应用到当前作品，播放时会自动显示"

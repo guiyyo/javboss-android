@@ -63,6 +63,8 @@ data class PlayerUiState(
     val embeddedSubtitleCount: Int = 0,
     /** 当前是否在用内嵌字幕 */
     val usingEmbeddedSubtitle: Boolean = false,
+    /** 内嵌轨是否**真的输出过字幕文字**（ExoPlayer 报有轨 ≠ 有内容） */
+    val embeddedHasCue: Boolean = false,
     /** 自绘字幕内容（改偏移不需要重建播放器） */
     val subtitleCues: List<com.javboss.android.data.subtitle.SubtitleCue> = emptyList(),
 )
@@ -252,7 +254,7 @@ class PlayerViewModel : ViewModel() {
         )
         val mediaSource: MediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
             .createMediaSource(mediaItem)
-        android.util.Log.i("JavBossPlayer", "startSource(kind=${source.kind}) subtitle=${state.subtitleName}")
+        com.javboss.android.core.log.AppLog.i("JavBossPlayer", "startSource(kind=${source.kind}) subtitle=${state.subtitleName}")
         state = state.copy(usedKind = source.kind, loading = false, error = null)
         exo.setMediaSource(mediaSource, positionMs.coerceAtLeast(0))
         exo.prepare()
@@ -398,7 +400,7 @@ class PlayerViewModel : ViewModel() {
 
     /** 偏移只改内存与持久化，不重新加载视频。 */
     fun shiftSubtitleOffset(deltaMs: Long) {
-        android.util.Log.i("JavBossSub", "shift=$deltaMs (no reload)")
+        com.javboss.android.core.log.AppLog.i("JavBossSub", "shift=$deltaMs (no reload)")
         val next = state.subtitleOffsetMs + deltaMs
         state = state.copy(subtitleOffsetMs = next)
         val code = state.javCode
@@ -469,10 +471,23 @@ class PlayerViewModel : ViewModel() {
                 }
                 e.trackSelectionParameters = b.build()
             }
-            android.util.Log.i(
+            com.javboss.android.core.log.AppLog.i(
                 "JavBossPlayer",
                 "textTracks=${textGroups.size} selected=${textGroups.count { it.isSelected }} sub=${state.subtitleName}",
             )
+            runCatching {
+                e.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+                    override fun onCues(
+                        eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                        cues: androidx.media3.common.text.CueGroup,
+                    ) {
+                        val text = cues.cues.joinToString(" ") { it.text?.toString().orEmpty() }.trim()
+                        if (text.isNotBlank() && !state.embeddedHasCue && state.subtitleName == null) {
+                            state = state.copy(embeddedHasCue = true)
+                        }
+                    }
+                })
+            }
             inspectTracks(e)
         }
     }
@@ -480,12 +495,17 @@ class PlayerViewModel : ViewModel() {
     /** 统计内嵌字幕轨：有外挂字幕时减掉那一条。 */
     private fun inspectTracks(exo: ExoPlayer) {
         runCatching {
-            val total = exo.currentTracks.groups.count { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+            val textGroups = exo.currentTracks.groups.filter {
+                it.type == androidx.media3.common.C.TRACK_TYPE_TEXT
+            }
+            val total = textGroups.size
             val embedded = if (subtitleFile != null) (total - 1).coerceAtLeast(0) else total
             state = state.copy(
                 embeddedSubtitleCount = embedded,
                 usingEmbeddedSubtitle = subtitleFile == null && embedded > 0,
             )
+            // 注意：ExoPlayer 报有 text 轨 ≠ 有字幕内容（转码流常见「空轨」），
+            // 因此这里不再写索引，改由 onCues 真正收到字幕文字时回写。
         }
     }
 

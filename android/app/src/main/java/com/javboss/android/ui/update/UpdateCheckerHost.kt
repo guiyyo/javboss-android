@@ -43,7 +43,7 @@ fun UpdateCheckerHost() {
             val hasProxy = runCatching { AppGraph.settings.netProxy() }.getOrNull() != null
             if (hasProxy) {
                 mirror = ""
-                android.util.Log.i("JavBossUpdate", "net proxy configured → use GitHub direct for updates")
+                com.javboss.android.core.log.AppLog.i("JavBossUpdate", "net proxy configured → use GitHub direct for updates")
             }
 
             // 1) 先静默测速（6 小时节流），自动应用最快镜像
@@ -68,7 +68,7 @@ fun UpdateCheckerHost() {
                     }
                     val chosen = best
                     if (chosen != null) {
-                        android.util.Log.i(
+                        com.javboss.android.core.log.AppLog.i(
                             "JavBossUpdate",
                             "silent speedtest best=${chosen.mirror} ${chosen.kbps}KB/s ${chosen.ttfbMs}ms",
                         )

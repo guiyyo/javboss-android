@@ -115,6 +115,7 @@ fun TvIdolScreen(
             TvPosterCard(
                 focusKey = "idol-${idol.id}",
                 focusRequester = requesterFor("idol-${idol.id}"),
+                subtitleCode = idol.coverCode.takeIf { it.isNotBlank() },
                 coverUrl = if (idol.coverCode.isNotBlank()) "$baseUrl/jav/${idol.coverCode}/cover" else "",
                 title = idol.chineseName.ifBlank { idol.name },
                 subtitle = "${idol.workCount} 部",
@@ -153,6 +154,7 @@ fun TvStudioScreen(
             TvPosterCard(
                 focusKey = "studio-${studio.id}",
                 focusRequester = requesterFor("studio-${studio.id}"),
+                subtitleCode = studio.sampleCode.takeIf { it.isNotBlank() },
                 coverUrl = if (studio.sampleCode.isNotBlank()) "$baseUrl/jav/${studio.sampleCode}/cover" else "",
                 title = studio.name,
                 subtitle = "${studio.workCount} 部" + if (studio.sampleCode.isNotBlank()) " · ${studio.sampleCode}" else "",
@@ -190,6 +192,7 @@ fun TvSeriesScreen(
             TvPosterCard(
                 focusKey = "series-${series.id}",
                 focusRequester = requesterFor("series-${series.id}"),
+                subtitleCode = series.sampleCode.takeIf { it.isNotBlank() },
                 coverUrl = if (series.sampleCode.isNotBlank()) "$baseUrl/jav/${series.sampleCode}/cover" else "",
                 title = series.zhName.ifBlank { series.name },
                 subtitle = "${series.workCount} 部" + if (series.studioName.isNotBlank()) " · ${series.studioName}" else "",

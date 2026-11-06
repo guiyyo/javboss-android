@@ -36,10 +36,10 @@ class ConfigRepository(private val settings: SettingsStore) {
         when (result) {
             is ApiResult.Success -> {
                 _config.value = result.data
-                android.util.Log.d("JavBossConfig", "PATCH ok ${values.keys}")
+                com.javboss.android.core.log.AppLog.d("JavBossConfig", "PATCH ok ${values.keys}")
             }
             is ApiResult.Failure ->
-                android.util.Log.w("JavBossConfig", "PATCH failed ${result.status}: ${result.message}")
+                com.javboss.android.core.log.AppLog.w("JavBossConfig", "PATCH failed ${result.status}: ${result.message}")
         }
         return result
     }

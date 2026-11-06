@@ -18,6 +18,8 @@ class MainActivity : FragmentActivity() {
 
     /** 按「隐私模式」设置决定是否禁止截屏 / 任务预览 */
     private fun applyPrivacyMode() {
+        // 调试包不启用 FLAG_SECURE，便于截图/录屏验证 UI（正式包仍按设置生效）
+        if (BuildConfig.DEBUG) return
         val enabled = runCatching {
             kotlinx.coroutines.runBlocking {
                 com.javboss.android.di.AppGraph.settings.uiPrefs.first { true }.privacyMode

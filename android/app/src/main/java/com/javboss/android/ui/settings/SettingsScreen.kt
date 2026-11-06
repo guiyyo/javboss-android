@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.RadioButton
@@ -67,6 +68,7 @@ fun SettingsScreen(
     onOpenTags: () -> Unit = {},
     onOpenFavorites: () -> Unit = {},
     onOpenAccount: () -> Unit = {},
+    onOpenSubtitleFill: () -> Unit = {},
     onOpenDownloader: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = viewModel(),
@@ -83,6 +85,57 @@ fun SettingsScreen(
     var subtitleProxyHostInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("192.168.1.1") }
     var subtitleProxyPortInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("8899") }
     var subtitleProxyHttps by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var indexMsg by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val exportSubtitlesZip = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val r = com.javboss.android.data.subtitle.SubtitleExporter.exportZip(context)
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        r.zip.inputStream().use { it.copyTo(out) }
+                    }
+                    indexMsg = "已导出 ${r.count} 条字幕（文件名：番号.语言.srt）"
+                }.onFailure { indexMsg = "导出失败：${it.message}" }
+            }
+        }
+    }
+    // 字幕索引导出 / 导入（让多台设备共享扫描结果，避免每台都全库扫描）
+    val exportIndex = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(com.javboss.android.data.subtitle.SubtitleIndex.exportJson().toByteArray())
+                    }
+                    indexMsg = "已导出字幕索引"
+                }.onFailure { indexMsg = "导出失败：${it.message}" }
+            }
+        }
+    }
+    val importIndex = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        ?: error("无法读取文件")
+                    val n = com.javboss.android.data.subtitle.SubtitleIndex.importJson(text)
+                    indexMsg = "已导入字幕索引：更新 $n 条"
+                }.onFailure { indexMsg = "导入失败：${it.message}" }
+            }
+        }
+    }
+    var proxyHelpDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var combinedProxyDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var langOrderDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var langOrderEdit by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(listOf("zh-Hans", "zh-Hant", "zh"))
+    }
     var netProxyDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var netProxyHostInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     var netProxyPortInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("7890") }
@@ -463,6 +516,112 @@ fun SettingsScreen(
                 )
             }
 
+            if (combinedProxyDialog) {
+                SubtitleProxyDialog(prefs = prefs, onDismiss = { combinedProxyDialog = false })
+            }
+
+            if (proxyHelpDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { proxyHelpDialog = false },
+                    title = { Text("字幕代理怎么填") },
+                    text = {
+                        Column {
+                            Text("这两个都是「进阶」选项，只在字幕搜索很慢或打不开时才需要设置。两者可以只用一个，也可以都不用。",
+                                style = MaterialTheme.typography.bodySmall)
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                            Text("① 网络代理", style = MaterialTheme.typography.labelLarge)
+                            Text("如果你本机跑着 Clash / v2ray 之类的代理软件，把它监听的 IP + 端口（常见 7890）填进去，字幕搜索和检查更新都会走它。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                            Text("② 字幕源反向代理", style = MaterialTheme.typography.labelLarge)
+                            Text("如果你在 NAS/服务器上自己搭了一个把请求转发到字幕站的反向代理，把它填进来（例如 192.168.1.1 + 8899）。没有搭就不要填。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { proxyHelpDialog = false }) { Text("知道了") }
+                    },
+                )
+            }
+
+            if (langOrderDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { langOrderDialog = false },
+                    title = { Text("字幕语言偏好") },
+                    text = {
+                        Column {
+                            Text(
+                                "靠前的语言优先用于「已配/缺字幕」判定与自动补齐打分；未知语言一律不排除，避免漏补。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(10.dp))
+                            langOrderEdit.forEachIndexed { idx, key ->
+                                androidx.compose.foundation.layout.Row(
+                                    Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "${idx + 1}. " + com.javboss.android.data.subtitle.SubtitleLang.label(key),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            if (idx > 0) {
+                                                val l = langOrderEdit.toMutableList()
+                                                val tmp = l[idx]; l[idx] = l[idx - 1]; l[idx - 1] = tmp
+                                                langOrderEdit = l
+                                            }
+                                        },
+                                        enabled = idx > 0,
+                                    ) { Text("↑") }
+                                    TextButton(
+                                        onClick = {
+                                            if (idx < langOrderEdit.lastIndex) {
+                                                val l = langOrderEdit.toMutableList()
+                                                val tmp = l[idx]; l[idx] = l[idx + 1]; l[idx + 1] = tmp
+                                                langOrderEdit = l
+                                            }
+                                        },
+                                        enabled = idx < langOrderEdit.lastIndex,
+                                    ) { Text("↓") }
+                                    TextButton(onClick = { langOrderEdit = langOrderEdit - key }) { Text("×") }
+                                }
+                            }
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(6.dp))
+                            androidx.compose.foundation.layout.Row(
+                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+                            ) {
+                                listOf("zh-Hans", "zh-Hant", "zh", "en", "ja").forEach { key ->
+                                    val present = langOrderEdit.any { it.equals(key, ignoreCase = true) }
+                                    if (!present) {
+                                        TextButton(onClick = { langOrderEdit = langOrderEdit + key }) {
+                                            Text("+ " + com.javboss.android.data.subtitle.SubtitleLang.label(key))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            langOrderDialog = false
+                            scope.launch {
+                                AppGraph.settings.setSubtitleLangOrder(
+                                    langOrderEdit.joinToString(",").ifBlank { "zh-Hans,zh-Hant,zh" },
+                                )
+                            }
+                        }) { Text("保存") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { langOrderDialog = false }) { Text("取消") }
+                    },
+                )
+            }
+
             SectionCard("卡片显示（仅本机）") {
                 val config by com.javboss.android.di.AppGraph.config.config.collectAsState()
                 val webPortrait = (config["jav_card_portrait"] ?: "").let { it == "true" || it == "1" }
@@ -555,39 +714,54 @@ fun SettingsScreen(
                     subtitleBaseInput = prefs.subtitleCatBase
                     subtitleBaseDialog = true
                 }
+                NavRow("导出已匹配字幕", "打包为 ZIP，条目名 = 番号.语言.srt") {
+                    exportSubtitlesZip.launch("javboss-subtitles.zip")
+                }
+                NavRow("导出字幕索引", "把本机扫描结果导出为 JSON，供其它设备导入") {
+                    exportIndex.launch("subtitles-index.json")
+                }
+                NavRow("导入字幕索引", "从其它设备导出的 JSON 合并进来（同番号取较新）") {
+                    importIndex.launch(arrayOf("application/json", "text/plain", "*/*"))
+                }
+                indexMsg?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, bottom = 6.dp),
+                    )
+                }
                 NavRow(
-                    "网络代理",
-                    if (prefs.netProxyHost.isBlank()) {
-                        "未设置（填代理 IP + 端口，字幕等外网请求走它）"
-                    } else {
-                        "${prefs.netProxyType.uppercase()}://${prefs.netProxyHost}:${prefs.netProxyPort}"
+                    "字幕代理",
+                    buildString {
+                        val netOn = prefs.netProxyHost.isNotBlank()
+                        val revOn = prefs.subtitleProxyHost.isNotBlank()
+                        if (!netOn && !revOn) append("未启用")
+                        if (netOn) append("网络代理 ").append(prefs.netProxyHost)
+                        if (netOn && revOn) append(" · ")
+                        if (revOn) append("反代 ").append(prefs.subtitleProxyHost)
                     },
+                ) { combinedProxyDialog = true }
+
+                NavRow(
+                    "批量补齐字幕",
+                    "自动搜索并下载（番号须完全匹配；已有字幕自动跳过；可设间隔防封）",
+                ) { onOpenSubtitleFill() }
+                NavRow(
+                    "字幕语言偏好",
+                    com.javboss.android.data.subtitle.SubtitleLang
+                        .parseOrder(prefs.subtitleLangOrder)
+                        .joinToString(" > ") { com.javboss.android.data.subtitle.SubtitleLang.label(it) },
                 ) {
-                    netProxyHostInput = prefs.netProxyHost
-                    netProxyPortInput = prefs.netProxyPort.toString()
-                    netProxySocks = prefs.netProxyType.equals("socks", true)
-                    netProxyDialog = true
+                    langOrderEdit = com.javboss.android.data.subtitle.SubtitleLang
+                        .parseOrder(prefs.subtitleLangOrder)
+                    langOrderDialog = true
                 }
                 SwitchRow(
                     "仅中文字幕",
                     "搜索时只保留中文条目（简中优先），减少无效等待",
                     prefs.subtitleChineseOnly,
                 ) { scope.launch { AppGraph.settings.setSubtitleChineseOnly(it) } }
-                NavRow(
-                    "字幕源代理",
-                    if (prefs.subtitleProxyHost.isBlank()) {
-                        "未设置（只填 IP 即可，如 192.168.1.1）"
-                    } else {
-                        (if (prefs.subtitleProxyHttps) "https" else "http") +
-                            "://${prefs.subtitleProxyHost}:${prefs.subtitleProxyPort}/?u=…"
-                    },
-                ) {
-                    subtitleProxyHostInput = prefs.subtitleProxyHost.ifBlank { "192.168.1.1" }
-                    subtitleProxyPortInput = prefs.subtitleProxyPort.toString()
-                    subtitleProxyHttps = prefs.subtitleProxyHttps
-                    subtitleProxyInput = prefs.subtitleProxy
-                    subtitleProxyDialog = true
-                }
                 Text(
                     "播放时点「字幕」按钮即可搜索/加载；加载后按番号记忆，下次自动套用。",
                     style = MaterialTheme.typography.labelSmall,
@@ -680,7 +854,15 @@ fun SettingsScreen(
                             .onSuccess { info ->
                                 if (info.hasUpdate) {
                                     updateInfo = info
-                                    updateResult = "发现新版本 v${info.latestVersion}"
+                                    updateResult = if (com.javboss.android.data.update.UpdateChecker.isNewer(
+                                            info.latestVersion,
+                                            com.javboss.android.BuildConfig.VERSION_NAME,
+                                        )
+                                    ) {
+                                        "发现新版本 v${info.latestVersion}"
+                                    } else {
+                                        "已是最新版本（GitHub 上 v${info.latestVersion} 不高于当前版本）"
+                                    }
                                 } else {
                                     updateResult = "已是最新版本"
                                 }
@@ -732,7 +914,7 @@ fun SettingsScreen(
 
             TextButton(
                 onClick = {
-                    crashText = com.javboss.android.core.log.CrashLogger.readLast(context) ?: "暂无崩溃记录 🎉"
+                    crashText = com.javboss.android.core.log.Diagnostics.buildReport(context)
                     crashLogOpen = true
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -964,8 +1146,7 @@ fun SettingsScreen(
                         TextButton(onClick = {
                             scope.launch {
                                 runCatching {
-                                    val file = com.javboss.android.core.log.Diagnostics.buildReport(context)
-                                    com.javboss.android.core.log.Diagnostics.shareFile(context, file)
+                                    com.javboss.android.core.log.Diagnostics.shareFile(context, crashText)
                                 }
                             }
                         }) { Text("分享到 QQ / 微信") }

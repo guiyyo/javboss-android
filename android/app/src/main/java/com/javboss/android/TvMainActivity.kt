@@ -17,7 +17,7 @@ class TvMainActivity : ComponentActivity() {
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         // 遥控器“设置”键 → 应用设置页（在 Compose 之前拦截）
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-            android.util.Log.d("TvKeys", "key=${event.keyCode}")
+            com.javboss.android.core.log.AppLog.d("TvKeys", "key=${event.keyCode}")
             // 只拦「设置键」；菜单键交给 Compose（播放页用于打开字幕窗口，其它页进设置）
             if (event.keyCode == android.view.KeyEvent.KEYCODE_SETTINGS) {
                 com.javboss.android.ui.tv.TvGlobalNav.requestOpenSettings()

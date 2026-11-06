@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -506,6 +507,7 @@ private fun TvHomeScreen(
                                 val title = video.jav?.let { it.zhTitle.ifBlank { it.title } } ?: video.filename
                                 val ratio = if (video.durationSec > 0) (video.watchedMs / 1000f) / video.durationSec else 0f
                                 TvPosterCard(
+                                    subtitleCode = video.jav?.code,
                                     coverUrl = coverOf(baseUrl, video),
                                     title = title,
                                     subtitle = "${formatDuration(video.watchedMs / 1000)} / ${formatDuration(video.durationSec)}",
@@ -528,6 +530,7 @@ private fun TvHomeScreen(
 
             items(vm.recentJav, key = { it.id }) { item ->
                 TvPosterCard(
+                                    subtitleCode = item.code,
                     focusKey = "${item.id}",
                     focusRequester = requesterFor("${item.id}"),
                     coverUrl = "$baseUrl/jav/${item.code}/cover",
@@ -608,6 +611,18 @@ private fun TvJavGridScreen(
     val display = rememberTvDisplaySettings()
     val portrait = display.portrait
     var showFilter by remember { mutableStateOf(false) }
+    var subtitleFilter by remember { mutableStateOf(com.javboss.android.ui.jav.SubtitleFilter.ALL) }
+    val shownItems = remember(subtitleFilter, vm.items) {
+        when (subtitleFilter) {
+            com.javboss.android.ui.jav.SubtitleFilter.ALL -> vm.items
+            com.javboss.android.ui.jav.SubtitleFilter.HAS ->
+                vm.items.filter { com.javboss.android.data.subtitle.SubtitleIndex.get(it.code)?.hasSubtitle == true }
+            com.javboss.android.ui.jav.SubtitleFilter.NO_SUBTITLE ->
+                vm.items.filter { com.javboss.android.data.subtitle.SubtitleIndex.get(it.code)?.noSubtitle == true }
+            com.javboss.android.ui.jav.SubtitleFilter.NO_NEED ->
+                vm.items.filter { com.javboss.android.data.subtitle.SubtitleIndex.get(it.code)?.noNeedSubtitle == true }
+        }
+    }
 
     LaunchedEffect(query) { vm.applyQuery(query) }
 
@@ -694,8 +709,9 @@ private fun TvJavGridScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(vm.items, key = { it.id }) { item ->
+            items(shownItems, key = { it.id }) { item ->
                 TvPosterCard(
+                                    subtitleCode = item.code,
                     focusKey = "${item.id}",
                     focusRequester = requesterFor("${item.id}"),
                     coverUrl = "$baseUrl/jav/${item.code}/cover",
@@ -719,8 +735,12 @@ private fun TvJavGridScreen(
     }
 
         if (showFilter) {
+            val counts = com.javboss.android.data.subtitle.SubtitleIndex.counts()
             TvFilterOverlay(
                 initial = vm.currentQuery(),
+                subtitleFilter = subtitleFilter,
+                subtitleStats = listOf(counts.first, counts.second, counts.third),
+                onSubtitleFilter = { subtitleFilter = it },
                 onDismiss = { showFilter = false },
                 onApply = { newQuery -> vm.applyQuery(newQuery) },
             )
@@ -886,6 +906,7 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
     var tvSpeedMsg by remember { mutableStateOf<String?>(null) }
     // 字幕代理弹窗（TV 端统一入口）
     var tvProxyDialogOpen by remember { mutableStateOf(false) }
+    var tvFillDialogOpen by remember { mutableStateOf(false) }
 
     var pinConfirm by remember { mutableStateOf("") }
     var crashText by remember { mutableStateOf("") }
@@ -966,722 +987,625 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
             ) { tvProxyDialogOpen = true }
         }
         item {
+            TvSettingRow("导出已匹配字幕（TV）", "打包 ZIP 到 Android/data/…/files/subtitles/（文件名 番号.语言.srt）") {
+                scope.launch {
+                    runCatching {
+                        val dir = java.io.File(context.getExternalFilesDir(null), "subtitles").apply { mkdirs() }
+                        val out = java.io.File(dir, "javboss-subtitles.zip")
+                        val r = com.javboss.android.data.subtitle.SubtitleExporter.exportZipTo(context, out)
+                        message = "已导出 ${r.count} 条 → ${out.absolutePath}"
+                    }.onFailure { message = "导出失败：${it.message}" }
+                }
+            }
+        }
+        item {
+            TvSettingRow("导入已匹配字幕（TV）", "从同目录的 javboss-subtitles.zip 恢复字幕文件") {
+                scope.launch {
+                    runCatching {
+                        val f = java.io.File(java.io.File(context.getExternalFilesDir(null), "subtitles"), "javboss-subtitles.zip")
+                        if (!f.exists()) {
+                            message = "找不到文件：${f.absolutePath}"
+                        } else {
+                            val n = com.javboss.android.data.subtitle.SubtitleExporter.importZipFrom(context, f)
+                            message = "已导入 $n 条字幕"
+                        }
+                    }.onFailure { message = "导入失败：${it.message}" }
+                }
+            }
+        }
+        item {
+            TvSettingRow("导出字幕索引（TV）", "写到 Android/data/…/files/subtitles/index-export.json") {
+                scope.launch {
+                    runCatching {
+                        val dir = java.io.File(context.getExternalFilesDir(null), "subtitles").apply { mkdirs() }
+                        val f = java.io.File(dir, "index-export.json")
+                        f.writeText(com.javboss.android.data.subtitle.SubtitleIndex.exportJson())
+                        message = "已导出：${f.absolutePath}"
+                    }.onFailure { message = "导出失败：${it.message}" }
+                }
+            }
+        }
+        item {
+            TvSettingRow("导入字幕索引（TV）", "从同一路径的 index-export.json 导入") {
+                scope.launch {
+                    runCatching {
+                        val f = java.io.File(java.io.File(context.getExternalFilesDir(null), "subtitles"), "index-export.json")
+                        if (!f.exists()) {
+                            message = "找不到文件：${f.absolutePath}"
+                        } else {
+                            val n = com.javboss.android.data.subtitle.SubtitleIndex.importJson(f.readText())
+                            message = "已导入：更新 $n 条"
+                        }
+                    }.onFailure { message = "导入失败：${it.message}" }
+                }
+            }
+        }
+        item {
+            val fillState by com.javboss.android.data.subtitle.SubtitleFill.state.collectAsState()
+            TvSettingRow(
+                "批量补齐字幕",
+                if (fillState.running) "补齐中 ${fillState.done}/${fillState.total}"
+                else if (fillState.total > 0) "上次：成功 ${fillState.filled} · 无匹配 ${fillState.noMatch}"
+                else "点开后可选择范围并开始",
+            ) { tvFillDialogOpen = true }
+        }
+        item {
             TvSettingRow("仅中文字幕", if (prefs.subtitleChineseOnly) "开" else "关") {
                 scope.launch { AppGraph.settings.setSubtitleChineseOnly(!prefs.subtitleChineseOnly) }
+            }
+        }
+        item { TvSectionHeader("显示与外观") }
+        item {
+            TvSettingRow(
+                "界面模式",
+                when (prefs.uiMode) {
+                    "tv" -> "电视"
+                    "tablet" -> "平板"
+                    "phone" -> "手机"
+                    else -> "自动（按设备）"
+                },
+            ) { modeOpen = true }
+        }
+        item {
+            TvSettingRow("播放器渲染", if (prefs.playerSurfaceView) "SurfaceView" else "TextureView（默认）") {
+                scope.launch {
+                    AppGraph.settings.setPlayerSurfaceView(!prefs.playerSurfaceView)
+                    message = if (!prefs.playerSurfaceView) "已切到 SurfaceView（部分机型更省电）"
+                    else "已切回 TextureView（更稳）"
+                }
+            }
+        }
+        item { TvSectionHeader("安全") }
+        item {
+            TvSettingRow("电视密码锁", if (prefs.tvPinEnabled) "已开启" else "未开启") {
+                scope.launch {
+                    if (prefs.tvPinEnabled) {
+                        AppGraph.settings.setTvPinEnabled(false)
+                        message = "已关闭电视密码锁"
+                    } else {
+                        pinSetupOpen = true
+                    }
+                }
             }
         }
         item { TvSectionHeader("更新") }
         item {
             TvSettingRow(
                 "检查更新",
-                when {
-                    tvChecking -> "检查中…"
-                    tvUpdate != null -> "发现新版本 v${tvUpdate!!.latestVersion}"
-                    tvUpdateMsg != null -> tvUpdateMsg!!
-                    else -> "v${com.javboss.android.BuildConfig.VERSION_NAME}"
-                },
+                tvUpdateMsg ?: if (tvChecking) "检查中…" else "当前 v" + com.javboss.android.BuildConfig.VERSION_NAME,
             ) {
-                if (tvChecking) return@TvSettingRow
-                tvChecking = true
-                tvUpdateMsg = null
                 scope.launch {
-                    com.javboss.android.data.update.UpdateInstaller.reset()
-                    com.javboss.android.data.update.UpdateChecker
+                    tvChecking = true
+                    tvUpdateMsg = null
+                    val r = com.javboss.android.data.update.UpdateChecker
                         .check(com.javboss.android.BuildConfig.VERSION_NAME)
-                        .onSuccess { info ->
-                            if (info.hasUpdate) {
-                                tvUpdate = info
-                            } else {
-                                tvUpdateMsg = "已是最新版本"
-                                message = "已是最新版本"
-                            }
-                        }
-                        .onFailure { tvUpdateMsg = "检查失败：${it.message}"; message = "检查失败：${it.message}" }
                     tvChecking = false
+                    tvUpdateMsg = r.fold(
+                        onSuccess = { info ->
+                            if (!com.javboss.android.data.update.UpdateChecker.isNewer(
+                                    info.latestVersion,
+                                    com.javboss.android.BuildConfig.VERSION_NAME,
+                                )
+                            ) {
+                                "已是最新版本" + (if (info.latestVersion != com.javboss.android.BuildConfig.VERSION_NAME)
+                                    "（GitHub 上最新 v" + info.latestVersion + " 低于当前版本）" else "")
+                            } else {
+                                "发现新版本 v" + info.latestVersion + "（到手机端更新，或浏览器打开 Releases）"
+                            }
+                        },
+                        onFailure = { "检查失败：" + (it.message ?: "") },
+                    )
                 }
             }
         }
         item {
             TvSettingRow(
                 "下载镜像",
-                com.javboss.android.data.update.UpdateMirror.label(prefs.updateMirror),
+                com.javboss.android.data.update.UpdateMirror.PRESETS
+                    .firstOrNull { it.first == prefs.updateMirror }?.second ?: "GitHub 直连",
             ) {
-                val list = com.javboss.android.data.update.UpdateMirror.PRESETS
-                val idx = list.indexOfFirst { it.first == prefs.updateMirror }
-                val next = list[(if (idx < 0) 0 else idx + 1) % list.size]
-                scope.launch { AppGraph.settings.setUpdateMirror(next.first) }
-                message = "下载镜像：${next.second}"
+                scope.launch {
+                    val presets = com.javboss.android.data.update.UpdateMirror.PRESETS
+                    val idx = presets.indexOfFirst { it.first == prefs.updateMirror }.coerceAtLeast(0)
+                    val next = presets[(idx + 1) % presets.size]
+                    AppGraph.settings.setUpdateMirror(next.first)
+                    message = "下载镜像：" + next.second
+                }
             }
         }
         item {
-            TvSettingRow("镜像测速", if (tvSpeedMsg != null) tvSpeedMsg!! else "自动测速并应用最快") {
-                if (tvSpeedTesting) return@TvSettingRow
-                tvSpeedTesting = true
-                tvSpeedMsg = "测速中…"
+            TvSettingRow(
+                "镜像测速",
+                tvSpeedMsg ?: if (tvSpeedTesting) "测速中…" else "自动测速并应用最快镜像",
+            ) {
                 scope.launch {
-                    val apk = com.javboss.android.data.update.UpdateChecker
-                        .check(com.javboss.android.BuildConfig.VERSION_NAME)
-                        .getOrNull()?.apkUrl
-                    if (apk.isNullOrBlank()) {
-                        tvSpeedMsg = "拿不到 APK 地址"
-                        tvSpeedTesting = false
-                        return@launch
-                    }
-                    var best: com.javboss.android.data.update.MirrorSpeed? = null
-                    coroutineScope {
-                        com.javboss.android.data.update.UpdateMirror.PRESETS.map { it.first }.chunked(4).forEach { g ->
-                            g.map { m ->
-                                async {
-                                    com.javboss.android.data.update.UpdateMirrorTester.test(m, apk)
-                                }
-                            }.map { it.await() }.forEach { r ->
-                                if (r.ok && r.kbps > 0 && (best == null || r.kbps > best!!.kbps)) best = r
+                    tvSpeedTesting = true
+                    tvSpeedMsg = "测速中…"
+                    runCatching {
+                        val info = com.javboss.android.data.update.UpdateChecker
+                            .check(com.javboss.android.BuildConfig.VERSION_NAME).getOrNull()
+                        val apk = info?.apkUrl
+                        if (apk.isNullOrBlank()) {
+                            tvSpeedMsg = "暂时拿不到下载地址，稍后再试"
+                        } else {
+                            val results = com.javboss.android.data.update.UpdateMirror.PRESETS.map { (m, label) ->
+                                com.javboss.android.data.update.UpdateMirrorTester.test(m, apk)
+                                    .let { spd -> spd.copy(label = label) }
+                            }.filter { it.ok }.sortedByDescending { it.kbps }
+                            val best = results.firstOrNull()
+                            if (best == null) {
+                                tvSpeedMsg = "所有镜像都不通，建议用直连"
+                            } else {
+                                AppGraph.settings.setUpdateMirror(best.mirror)
+                                AppGraph.settings.setUpdateMirrorLastTest(System.currentTimeMillis())
+                                tvSpeedMsg = "已选：" + best.label + "（" + best.kbps + " KB/s）"
                             }
                         }
-                    }
-                    val chosen = best
-                    if (chosen != null) {
-                        AppGraph.settings.setUpdateMirror(chosen.mirror)
-                        tvSpeedMsg = "${chosen.label} · ${chosen.kbps} KB/s"
-                        message = "已应用最快镜像：${chosen.label}（${chosen.kbps} KB/s）"
-                    } else {
-                        tvSpeedMsg = "全部失败"
-                    }
+                    }.onFailure { tvSpeedMsg = "测速失败：" + (it.message ?: "") }
                     tvSpeedTesting = false
                 }
             }
         }
-
-        item { TvSectionHeader("显示与外观") }
         item {
-            TvSettingRow(
-                "界面模式",
-                when (prefs.uiMode) {
-                    "phone" -> "手机"
-                    "tablet" -> "平板"
-                    "tv" -> "电视"
-                    else -> "自动"
-                },
-            ) {
-                pendingMode = prefs.uiMode
-                modeOpen = true
-            }
-        }
-        item { TvSectionHeader("播放") }
-        item {
-            TvSettingRow(
-                "默认排序",
-                when (prefs.javSort) {
-                    "duration" -> "时长↓"
-                    "favorite_rating" -> "喜爱度↓"
-                    "watched" -> "观看最多"
-                    else -> "最近入库"
-                },
-            ) {
-                val order = listOf("recent", "duration", "favorite_rating", "watched")
-                val next = order[(order.indexOf(prefs.javSort).coerceAtLeast(0) + 1) % order.size]
-                scope.launch { AppGraph.settings.setJavSort(next) }
-            }
-        }
-
-        item {
-            TvSettingRow(
-                "每行卡片数",
-                if (prefs.tvColumns == 0) "自动（按屏幕）" else "${prefs.tvColumns} 个",
-            ) {
-                val order = listOf(0, 3, 4, 5, 6)
-                val next = order[(order.indexOf(prefs.tvColumns).coerceAtLeast(0) + 1) % order.size]
-                scope.launch { AppGraph.settings.setTvColumns(next) }
-            }
-        }
-        item { TvSectionHeader("安全") }
-        item {
-            TvSettingRow(
-                "密码锁",
-                if (prefs.tvPinEnabled && prefs.tvPinHash.isNotBlank()) "开" else "关",
-            ) {
-                if (prefs.tvPinEnabled) {
-                    // 关闭密码锁（不需要再输密码）
-                    scope.launch {
-                        AppGraph.settings.setTvPinEnabled(false)
-                        message = "密码锁已关闭"
-                    }
-                } else {
-                    // 打开前先弹出「设置密码（两次输入确认）」
-                    pinSetupOpen = true
-                    pinInput = ""
-                    pinConfirm = ""
-                }
-            }
-        }
-        if (prefs.tvPinEnabled && prefs.tvPinHash.isNotBlank()) {
-        item {
-            TvSettingRow(
-                "超时锁定",
-                if (prefs.tvIdleLockMinutes <= 0) "关闭" else "${prefs.tvIdleLockMinutes} 分钟无操作后锁屏",
-            ) {
-                scope.launch {
-                    val order = listOf(0, 5, 10, 15, 30, 60)
-                    val next = order[(order.indexOf(prefs.tvIdleLockMinutes).coerceAtLeast(0) + 1) % order.size]
-                    AppGraph.settings.setTvIdleLockMinutes(next)
-                    message = if (next == 0) "已关闭超时锁定" else "已设为 ${next} 分钟无操作后锁屏"
-                }
-            }
-        }
-        }
-        if (prefs.tvPinEnabled) {
-            item {
-                TvSettingRow("修改密码", "打开设置密码窗口") {
-                    pinSetupOpen = true
-                    pinInput = ""
-                    pinConfirm = ""
-                }
-            }
-        }
-        item {
-            TvSettingRow(
-                "封面样式",
-                when (prefs.coverStyle) {
-                    "portrait" -> "竖版（裁切填充）"
-                    "landscape" -> "横版（完整显示）"
-                    else -> "跟随网页"
-                },
-            ) {
-                scope.launch {
-                    val next = when (prefs.coverStyle) {
-                        "" -> "portrait"
-                        "portrait" -> "landscape"
-                        else -> ""
-                    }
-                    AppGraph.settings.setCoverStyle(next)
-                }
-            }
-        }
-        item {
-            TvSettingRow("优先直连播放", if (prefs.preferDirect) "开" else "关") {
-                scope.launch { AppGraph.settings.setPreferDirect(!prefs.preferDirect) }
-            }
-        }
-        item {
-            TvSettingRow("默认倍速", "${prefs.playbackSpeed}x") {
-                val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
-                val next = speeds[(speeds.indexOfFirst { it == prefs.playbackSpeed }.coerceAtLeast(0) + 1) % speeds.size]
-                scope.launch { AppGraph.settings.setPlaybackSpeed(next) }
-            }
-        }
-        item {
-            TvSettingRow("退出登录", "") { onLogout() }
-        }
-        message?.let { text ->
-            item {
-                Text(text, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-        item { TvSectionHeader("其他") }
-        item {
-            TvFocusable(onClick = {
-                crashText = com.javboss.android.core.log.CrashLogger.readLast(context) ?: "暂无崩溃记录"
-                crashOpen = true
-            }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("诊断日志", style = MaterialTheme.typography.bodyMedium)
-                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                    Text("查看", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-        item {
-            Text(
-                "JavBoss Android TV v${com.javboss.android.BuildConfig.VERSION_NAME} · " +
-                    "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-        }
-    }
-        if (crashOpen) {
-            TvCrashOverlay(crashText) { crashOpen = false }
-        }
-        tvUpdate?.let { info ->
-            com.javboss.android.ui.update.UpdateDialog(
-                info = info,
-                currentVersion = com.javboss.android.BuildConfig.VERSION_NAME,
-                mirror = if (prefs.netProxyHost.isNotBlank()) "" else prefs.updateMirror,
-                onDismiss = { tvUpdate = null },
-                tvMode = true,
-            )
-        }
-        if (pinSetupOpen) {
-            TvPinSetupOverlay(
-                pin = pinInput,
-                confirm = pinConfirm,
-                onPinChange = { pinInput = it },
-                onConfirmChange = { pinConfirm = it },
-                onDismiss = { pinSetupOpen = false },
-                onSave = {
-                    when {
-                        pinInput.length < 4 -> message = "密码至少 4 位数字"
-                        pinInput != pinConfirm -> message = "两次输入的密码不一致"
-                        else -> {
-                            scope.launch {
-                                AppGraph.settings.setTvPin(pinInput)
-                                message = "密码已保存，密码锁已开启"
-                                pinSetupOpen = false
-                                pinInput = ""
-                                pinConfirm = ""
-                            }
-                        }
-                    }
-                },
-            )
-        }
-        if (tvProxyDialogOpen) {
-            TvSubtitleProxyDialog(
-                netEnabled0 = prefs.netProxyHost.isNotBlank(),
-                netHost0 = prefs.netProxyHost.ifBlank { "192.168.1.1" },
-                netPort0 = prefs.netProxyPort.toString(),
-                netSocks0 = prefs.netProxyType.equals("socks", true),
-                revEnabled0 = prefs.subtitleProxyHost.isNotBlank(),
-                revHost0 = prefs.subtitleProxyHost.ifBlank { "192.168.1.1" },
-                revPort0 = prefs.subtitleProxyPort.toString(),
-                revHttps0 = prefs.subtitleProxyHttps,
-                onDismiss = { tvProxyDialogOpen = false },
-                onSave = { ne, nh, np, ns, re, rh, rp, rh2 ->
-                    scope.launch {
-                        AppGraph.settings.setNetProxyHost(if (ne) nh.trim() else "")
-                        AppGraph.settings.setNetProxyPort(np.toIntOrNull() ?: 7890)
-                        AppGraph.settings.setNetProxyType(if (ns) "socks" else "http")
-                        AppGraph.settings.setSubtitleProxyHost(if (re) rh.trim() else "")
-                        AppGraph.settings.setSubtitleProxyPort(rp.toIntOrNull() ?: 8899)
-                        AppGraph.settings.setSubtitleProxyHttps(rh2)
-                        message = "字幕代理已保存"
-                    }
-                    tvProxyDialogOpen = false
-                },
-            )
-        }
-        if (modeOpen) {
-            TvModeOverlay(
-                current = pendingMode,
-                onPick = { pendingMode = it },
-                onDismiss = { modeOpen = false },
-                onConfirm = {
-                    modeOpen = false
-                    scope.launch {
-                        AppGraph.settings.setUiMode(pendingMode)
-                        message = "已切换，重启应用后生效"
-                    }
-                },
-            )
-        }
-    }
-}
-@Composable
-private fun TvCrashOverlay(text: String, onClose: () -> Unit) {
-    androidx.activity.compose.BackHandler { onClose() }
-    val focus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
-    androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .focusRequester(focus)
-            .focusable()
-            .onKeyEvent { event ->
-                if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                    event.key == androidx.compose.ui.input.key.Key.Back
-                ) { onClose(); true } else false
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        androidx.compose.material3.Surface(
-            shape = androidx.compose.ui.graphics.RectangleShape,
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            modifier = Modifier.fillMaxWidth(0.8f).widthIn(max = 900.dp),
-        ) {
-            Column(Modifier.padding(24.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("诊断日志", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    TvFocusable(onClick = onClose, shape = RoundedCornerShape(8.dp), flat = true) {
-                        Text("关闭", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                    }
-                }
-                Row(
-                    modifier = Modifier.padding(top = 12.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
-                ) {
-                    // 二维码内容 = 本机临时网页地址（微信/QQ 扫码会直接打开网页显示日志文字）
-                    val url = androidx.compose.runtime.remember(text) {
-                        com.javboss.android.core.log.LocalLogServer.publish(text)
-                    }
-                    val qr = androidx.compose.runtime.remember(url, text) {
-                        url?.let { com.javboss.android.core.log.QrCodes.bitmap(it, maxChars = 300) }
-                            // 兜底：本机服务不可用时，退回「文本二维码」
-                            ?: com.javboss.android.core.log.QrCodes.bitmap(text, sizePx = 720, maxChars = 900)
-                    }
-                    if (qr != null) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            androidx.compose.foundation.Image(
-                                bitmap = qr,
-                                contentDescription = "诊断日志二维码",
-                                modifier = Modifier.size(240.dp),
-                            )
-                            Text(
-                                url ?: "（本机服务未启动，二维码为日志文本）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 3,
-                                modifier = Modifier.padding(top = 8.dp),
-                            )
-                            Text(
-                                if (url != null) "微信 / QQ 扫码后在浏览器打开即可看到日志全文"
-                                else "扫码可读取日志文本（如扫不出请直接看右侧）",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        modifier = Modifier.weight(1f).heightIn(max = 420.dp).verticalScroll(
-                            androidx.compose.foundation.rememberScrollState(),
-                        ),
+            TvSettingRow("打开 Releases 页面", "在浏览器中下载最新版") {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/guiyyo/javboss-android/releases"),
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
                 }
             }
         }
+        item { TvSectionHeader("其他") }
+        item {
+            TvSettingRow("诊断日志", "查看最近的崩溃信息") {
+                crashText = com.javboss.android.core.log.Diagnostics.buildReport(context)
+                crashOpen = true
+            }
+        }
+        item { TvSettingRow("退出登录", "") { onLogout() } }
+        item {
+            TvSettingRow(
+                "版本",
+                "v" + com.javboss.android.BuildConfig.VERSION_NAME,
+            ) { }
+        }
+        message?.let { msg ->
+            item {
+                Text(msg, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+
+    if (tvProxyDialogOpen) {
+        TvSubtitleProxyDialog(onDismiss = { tvProxyDialogOpen = false }, prefs = prefs)
+    }
+    if (tvFillDialogOpen) {
+        TvBatchFillDialog(onDismiss = { tvFillDialogOpen = false })
+    }
+    if (crashOpen) {
+        TvCrashDialog(text = crashText, onDismiss = { crashOpen = false })
+    }
+    if (modeOpen) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { modeOpen = false },
+            title = { Text("界面模式") },
+            text = {
+                Column {
+                    listOf(
+                        "auto" to "自动（按设备）",
+                        "tv" to "电视",
+                        "tablet" to "平板",
+                        "phone" to "手机",
+                    ).forEach { pair ->
+                        TvFocusable(
+                            onClick = {
+                                scope.launch { AppGraph.settings.setUiMode(pair.first) }
+                                modeOpen = false
+                                message = "界面模式：" + pair.second
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            flat = true,
+                        ) { Text(pair.second, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { modeOpen = false }) { Text("关闭") } },
+        )
+    }
+    if (pinSetupOpen) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pinSetupOpen = false },
+            title = { Text("设置电视密码") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = pinInput,
+                    onValueChange = { v -> pinInput = v.filter { c -> c.isDigit() }.take(6) },
+                    label = { Text("4~6 位数字") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (pinInput.length >= 4) {
+                        scope.launch {
+                            AppGraph.settings.setTvPinEnabled(true)
+                            pinSetupOpen = false
+                            pinInput = ""
+                            message = "已开启电视密码锁"
+                        }
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { pinSetupOpen = false }) { Text("取消") } },
+        )
     }
     }
 }
 
+/* ---------------- TV 设置用的两个小组件 ---------------- */
+
+@Composable
+private fun TvSectionHeader(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 10.dp),
+    )
+}
+
 @Composable
 private fun TvSettingRow(label: String, value: String, onClick: () -> Unit) {
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val focus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     TvFocusable(
         onClick = {
             onClick()
-            // 值改变后把焦点放回该项，避免光标丢失
             scope.launch {
                 kotlinx.coroutines.delay(80)
                 runCatching { focus.requestFocus() }
             }
         },
-        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).focusRequester(focus),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).focusRequester(focus),
+        shape = RoundedCornerShape(10.dp),
+        outlined = true,
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.weight(1f))
-            Text(value, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text(
+                value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
         }
     }
 }
 
-@Composable
-private fun TvModeOverlay(
-    current: String,
-    onPick: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-    Box(
-        Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) {
-        androidx.compose.material3.Surface(
-            shape = androidx.compose.ui.graphics.RectangleShape,
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(0.7f),
-        ) {
-            Column(Modifier.padding(24.dp)) {
-                Text("选择界面模式", style = MaterialTheme.typography.titleLarge)
-                listOf(
-                    "auto" to "自动（按屏幕大小）",
-                    "phone" to "手机",
-                    "tablet" to "平板",
-                    "tv" to "电视（遥控器界面）",
-                ).forEach { (value, label) ->
-                    TvFocusable(
-                        onClick = { onPick(value) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        flat = true,
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (current == value) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (current == value) Text("✔", color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                }
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                    TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
-                        Text("取消", maxLines = 1, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
-                    }
-                    TvFocusable(onClick = onConfirm, shape = RoundedCornerShape(8.dp), flat = true) {
-                        Text(
-                            "确定",
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-    }
-}
-
-@Composable
-private fun TvPinSetupOverlay(
-    pin: String,
-    confirm: String,
-    onPinChange: (String) -> Unit,
-    onConfirmChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onSave: () -> Unit,
-) {
-    // 两步：先输密码，再用数字键盘二次确认（TV 不依赖系统输入法）
-    var step by remember { mutableStateOf(0) }
-    var message by remember { mutableStateOf<String?>(null) }
-
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        androidx.compose.material3.Surface(
-            shape = androidx.compose.ui.graphics.RectangleShape,
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            modifier = Modifier.widthIn(max = 620.dp),
-        ) {
-            Column(
-                Modifier.padding(28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Text("设置密码锁", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    if (step == 0) "输入 4–6 位数字密码" else "请再次输入以确认",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                TvPinPad(
-                    pin = if (step == 0) pin else confirm,
-                    onPinChange = { v -> if (step == 0) onPinChange(v) else onConfirmChange(v) },
-                    actionLabel = if (step == 0) "下一步" else "保存",
-                    onAction = {
-                        if (step == 0) {
-                            if (pin.length < 4) message = "密码至少 4 位数字" else { message = null; step = 1 }
-                        } else {
-                            when {
-                                confirm.length < 4 -> message = "密码至少 4 位数字"
-                                confirm != pin -> message = "两次输入的密码不一致"
-                                else -> onSave()
-                            }
-                        }
-                    },
-                )
-                message?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-                TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
-                    Text(
-                        "取消",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 设置页分组标题。 */
-@Composable
-private fun TvSectionHeader(title: String) {
-    Text(
-        title,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-    )
-}
-
-/**
- * 电视端「字幕代理」弹窗：网络代理 + 字幕源反代 合并为一个弹窗，
- * 各带开关、预填 192.168.1.1、简洁示例，底部「保存 / 取消」。
- */
+/** 字幕代理弹窗：两个开关（网络代理 / 字幕源反代） */
 @Composable
 private fun TvSubtitleProxyDialog(
-    netEnabled0: Boolean,
-    netHost0: String,
-    netPort0: String,
-    netSocks0: Boolean,
-    revEnabled0: Boolean,
-    revHost0: String,
-    revPort0: String,
-    revHttps0: Boolean,
     onDismiss: () -> Unit,
-    onSave: (Boolean, String, String, Boolean, Boolean, String, String, Boolean) -> Unit,
+    prefs: com.javboss.android.data.settings.UiPrefs,
 ) {
-    var netEnabled by remember { mutableStateOf(netEnabled0) }
-    var netHost by remember { mutableStateOf(netHost0.ifBlank { "192.168.1.1" }) }
-    var netPort by remember { mutableStateOf(netPort0.ifBlank { "7890" }) }
-    var netSocks by remember { mutableStateOf(netSocks0) }
-
-    var revEnabled by remember { mutableStateOf(revEnabled0) }
-    var revHost by remember { mutableStateOf(revHost0.ifBlank { "192.168.1.1" }) }
-    var revPort by remember { mutableStateOf(revPort0.ifBlank { "8899" }) }
-    var revHttps by remember { mutableStateOf(revHttps0) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var netOn by remember { mutableStateOf(prefs.netProxyHost.isNotBlank()) }
+    var netHost by remember { mutableStateOf(prefs.netProxyHost) }
+    var netPort by remember { mutableStateOf(prefs.netProxyPort.toString()) }
+    var netSocks by remember { mutableStateOf(prefs.netProxyType.equals("socks", true)) }
+    var revOn by remember { mutableStateOf(prefs.subtitleProxyHost.isNotBlank()) }
+    var revHost by remember { mutableStateOf(prefs.subtitleProxyHost) }
+    var revPort by remember { mutableStateOf(prefs.subtitleProxyPort.toString()) }
+    var revHttps by remember { mutableStateOf(prefs.subtitleProxyHttps) }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(
-            usePlatformDefaultWidth = false,
-            // 不随软键盘缩放窗口，避免弹窗上下抖动
-            decorFitsSystemWindows = false,
-        ),
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         androidx.compose.material3.Surface(
             shape = androidx.compose.ui.graphics.RectangleShape,
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            modifier = Modifier
-                .padding(vertical = 12.dp)
-                .fillMaxWidth(0.86f)
-                // 1080p 电视 @320dpi 只有 540dp 高：限制高度 + 内部滚动，保证按钮始终可见
-                .heightIn(max = 470.dp),
+            modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(0.8f).heightIn(max = 470.dp),
         ) {
             Column(
-                Modifier
-                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                Modifier.padding(horizontal = 24.dp, vertical = 14.dp)
                     .verticalScroll(androidx.compose.foundation.rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("字幕代理", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
-                        Text("关闭", modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
-                    }
+                Text("字幕代理", style = MaterialTheme.typography.titleLarge)
+                TvSettingRow("网络代理", if (netOn) "开" else "关") {
+                    netOn = !netOn
+                    if (netOn) revOn = false   // 二选一
                 }
-                Text(
-                    "字幕站点较慢或访问不了时用。两个代理可单独开关，都关 = 直连；访问自家服务器不受影响。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                // ---------- 网络代理 ----------
-                TvSettingRow("网络代理", if (netEnabled) "已启用" else "已关闭") {
-                    netEnabled = !netEnabled
-                }
-                if (netEnabled) {
+                if (netOn) {
                     TvInputField(
                         value = netHost,
                         onValueChange = { netHost = it },
                         placeholder = "192.168.1.1",
-                        label = "代理 IP / 主机",
+                        label = "IP / 主机",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     TvInputField(
                         value = netPort,
-                        onValueChange = { netPort = it.filter { c -> c.isDigit() }.take(5) },
+                        onValueChange = { v -> netPort = v.filter { it.isDigit() }.take(5) },
                         placeholder = "7890",
-                        label = "代理端口",
+                        label = "端口",
                         digitsOnly = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    TvSettingRow("代理类型", if (netSocks) "SOCKS5" else "HTTP") { netSocks = !netSocks }
-                    Text(
-                        "示例：Clash/v2ray 的混合端口常为 7890 → 填 192.168.1.1 + 7890 + HTTP",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    TvSettingRow("类型", if (netSocks) "SOCKS5" else "HTTP") { netSocks = !netSocks }
                 }
-
-                // ---------- 字幕源反代 ----------
-                TvSettingRow("字幕源反代", if (revEnabled) "已启用" else "已关闭") {
-                    revEnabled = !revEnabled
+                TvSettingRow("字幕源反代", if (revOn) "开" else "关") {
+                    revOn = !revOn
+                    if (revOn) netOn = false   // 二选一
                 }
-                if (revEnabled) {
+                if (revOn) {
                     TvInputField(
                         value = revHost,
                         onValueChange = { revHost = it },
                         placeholder = "192.168.1.1",
-                        label = "反代 IP / 主机",
+                        label = "IP / 主机",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     TvInputField(
                         value = revPort,
-                        onValueChange = { revPort = it.filter { c -> c.isDigit() }.take(5) },
+                        onValueChange = { v -> revPort = v.filter { it.isDigit() }.take(5) },
                         placeholder = "8899",
-                        label = "反代端口",
+                        label = "端口",
                         digitsOnly = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    TvSettingRow("反代协议", if (revHttps) "HTTPS" else "HTTP") { revHttps = !revHttps }
-                    Text(
-                        "示例：" + (if (revHttps) "https" else "http") +
-                            "://" + revHost.ifBlank { "192.168.1.1" } + ":" + revPort.ifBlank { "8899" } + "/?u={url}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    TvSettingRow("协议", if (revHttps) "HTTPS" else "HTTP") { revHttps = !revHttps }
                 }
-
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.weight(1f))
                     TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
-                        Text("取消", modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+                        Text("取消", modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
                     }
                     TvFocusable(
                         onClick = {
-                            onSave(
-                                netEnabled, netHost, netPort, netSocks,
-                                revEnabled, revHost, revPort, revHttps,
-                            )
+                            scope.launch {
+                                AppGraph.settings.setNetProxyHost(if (netOn) netHost.trim() else "")
+                                AppGraph.settings.setNetProxyPort(netPort.toIntOrNull() ?: 7890)
+                                AppGraph.settings.setNetProxyType(if (netSocks) "socks" else "http")
+                                AppGraph.settings.setSubtitleProxyHost(if (revOn) revHost.trim() else "")
+                                AppGraph.settings.setSubtitleProxyPort(revPort.toIntOrNull() ?: 8899)
+                                AppGraph.settings.setSubtitleProxyHttps(revHttps)
+                            }
+                            onDismiss()
                         },
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(
                             "保存",
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                         )
                     }
                 }
             }
         }
     }
+}
+
+/** 「批量补齐字幕」弹窗：选范围 + 开始/停止 + 进度 */
+@Composable
+private fun TvBatchFillDialog(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val fillState by com.javboss.android.data.subtitle.SubtitleFill.state.collectAsState()
+    val manual by com.javboss.android.data.subtitle.SubtitleFill.manual.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        runCatching { com.javboss.android.data.subtitle.SubtitleFill.init(context) }
+    }
+    var tvReviewOpen by remember { mutableStateOf(false) }
+    var limit by remember { mutableStateOf(0) }
+    var interval by remember { mutableStateOf(2000L) }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.ui.graphics.RectangleShape,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 1500.dp),
+        ) {
+            Column(
+                Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("批量补齐字幕", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "自动搜索并下载缺失字幕：已有字幕/无字幕/无需字幕会跳过；番号必须完全一致才下载；人工翻译优先。任务不会自动开始。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("范围", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(20 to "前 20 部", 100 to "前 100 部", 0 to "全部").forEach { pair ->
+                        TvFocusable(
+                            onClick = { if (!fillState.running) limit = pair.first },
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                (if (limit == pair.first) "● " else "○ ") + pair.second,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                color = if (limit == pair.first) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                Text("请求间隔", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1500L to "1.5s", 2000L to "2s", 3000L to "3s").forEach { pair ->
+                        TvFocusable(
+                            onClick = { if (!fillState.running) interval = pair.first },
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                (if (interval == pair.first) "● " else "○ ") + pair.second,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                color = if (interval == pair.first) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                if (fillState.total > 0) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { (fillState.done.toFloat() / fillState.total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Text(fillState.message, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "进度 " + fillState.done + "/" + fillState.total +
+                        " · 成功 " + fillState.filled +
+                        " · 无匹配 " + fillState.noMatch +
+                        " · 失败 " + fillState.failed,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                TvFocusable(
+                    onClick = { if (manual.isNotEmpty()) tvReviewOpen = true },
+                    shape = RoundedCornerShape(8.dp),
+                    flat = true,
+                ) {
+                    Text(
+                        "待复核 " + manual.size + " 部（点开查看）›",
+                        color = if (manual.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                if (manual.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TvFocusable(
+                            onClick = {
+                                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.javboss.android.data.subtitle.SubtitleFill.markAllManualNoSubtitle(context)
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                "全部标记无字幕",
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        TvFocusable(
+                            onClick = {
+                                com.javboss.android.data.subtitle.SubtitleFill.retryManual(context)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                "全部重试",
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f))
+                    TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(8.dp), flat = true) {
+                        Text("关闭", modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                    }
+                    TvFocusable(
+                        onClick = {
+                            if (fillState.running) {
+                                com.javboss.android.data.subtitle.SubtitleFill.stop()
+                            } else {
+                                com.javboss.android.data.subtitle.SubtitleFill.start(
+                                    context, limit = limit, intervalMs = interval,
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text(
+                            if (fillState.running) "停止" else "开始补齐",
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+    if (tvReviewOpen) {
+        TvReviewDialog(onDismiss = { tvReviewOpen = false })
+    }
+}
+
+@Composable
+private fun TvCrashDialog(text: String, onDismiss: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("诊断日志") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 420.dp).verticalScroll(
+                    androidx.compose.foundation.rememberScrollState(),
+                ),
+            ) { Text(text, style = MaterialTheme.typography.bodySmall) }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = {
+                    runCatching {
+                        val ctx = com.javboss.android.di.AppGraph.contextOrNull()
+                        if (ctx != null) {
+                            val dir = java.io.File(ctx.getExternalFilesDir(null), "logs").apply { mkdirs() }
+                            java.io.File(dir, "javboss-log.txt").writeText(text)
+                        }
+                    }
+                }) { Text("导出到文件") }
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        },
+    )
 }

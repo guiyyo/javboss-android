@@ -25,7 +25,13 @@ class SubtitleRepository(
 ) {
     private val cat = SubtitleCatProvider(
         baseUrlProvider = { runCatching { settings.uiPrefs.first().subtitleCatBase }.getOrDefault("") },
-        proxyProvider = { runCatching { settings.subtitleProxyUrl() }.getOrDefault("") },
+        // 配了「网络代理」时一律不用反向代理（旧 workers.dev 反代已失效，优先级过高曾导致全部请求失败）
+        proxyProvider = {
+            runCatching {
+                val prefs = settings.uiPrefs.first()
+                if (prefs.netProxyHost.isNotBlank()) "" else settings.subtitleProxyUrl()
+            }.getOrDefault("")
+        },
         netProxyProvider = { runCatching { settings.netProxy() }.getOrNull() },
     )
     private val local = LocalSubtitleProvider(context)
@@ -68,7 +74,7 @@ class SubtitleRepository(
                 return Result.success(list)
             }
             lastError = result.exceptionOrNull()?.message ?: "无结果"
-            android.util.Log.i("JavBossSub", "source $base failed: $lastError")
+            com.javboss.android.core.log.AppLog.i("JavBossSub", "source $base failed: $lastError")
         }
         return Result.failure(IllegalStateException("所有字幕源都失败（最后一次：$lastError）"))
     }
@@ -195,11 +201,11 @@ class SubtitleRepository(
                         done = true,
                         installed = inst,
                     )
-                    android.util.Log.i("JavBossSub", "installAsync ok: ${inst.name}")
+                    com.javboss.android.core.log.AppLog.i("JavBossSub", "installAsync ok: ${inst.name}")
                     return@launch
                 }
                 lastError = result.exceptionOrNull()?.message ?: "未知错误"
-                android.util.Log.w("JavBossSub", "candidate ${c.id} failed: $lastError")
+                com.javboss.android.core.log.AppLog.w("JavBossSub", "candidate ${c.id} failed: $lastError")
             }
             _installState.value = InstallProgress(
                 code = code,
@@ -237,7 +243,7 @@ class SubtitleRepository(
             runCatching {
                 val url = cat.resolveDownload(target)
                 if (!url.isNullOrBlank()) saveResolved(code, target.id, url)
-                android.util.Log.i("JavBossSub", "prewarm ${target.id}: ${url ?: "failed"}")
+                com.javboss.android.core.log.AppLog.i("JavBossSub", "prewarm ${target.id}: ${url ?: "failed"}")
             }
         }
     }
@@ -256,13 +262,18 @@ class SubtitleRepository(
     /* ------------------------------------------------------------- 安装 */
 
     /** 安装选中的字幕：下载/读取 → 转 SRT → 写入缓存 → 记忆选择。 */
+    /** 字幕安装成功后同步索引（L1） */
+    private suspend fun markInstalled(code: String) {
+        runCatching { SubtitleIndex.markOnline(code) }
+    }
+
     suspend fun install(
         code: String,
         candidate: SubtitleCandidate,
         onProgress: ((Float?) -> Unit)? = null,
     ): Result<InstalledSubtitle> = withContext(Dispatchers.IO) {
         runCatching {
-            android.util.Log.i("JavBossSub", "install start: ${candidate.title} src=${candidate.source}")
+            com.javboss.android.core.log.AppLog.i("JavBossSub", "install start: ${candidate.title} src=${candidate.source}")
             val bytes = when {
                 candidate.localUri != null -> local.readBytes(candidate.localUri)
                     ?: error("读取本地字幕失败")
@@ -272,7 +283,7 @@ class SubtitleRepository(
                         ?: runCatching { cat.resolveDownload(candidate) }.getOrNull()
                         ?: error("解析下载地址失败（详情页没取到 .srt 链接，可能是源站限流）")
                     runCatching { saveResolved(code, candidate.id, url) }
-                    android.util.Log.i("JavBossSub", "download url: $url")
+                    com.javboss.android.core.log.AppLog.i("JavBossSub", "download url: $url")
                     runCatching {
                         cat.download(url) { read, total ->
                             onProgress?.invoke(if (total > 0) (read.toFloat() / total) else null)
@@ -283,7 +294,7 @@ class SubtitleRepository(
             }
             val rawName = candidate.localUri?.let { local.fileNameOf(it) }
                 ?: candidate.title.ifBlank { "subtitle.srt" }
-            android.util.Log.i("JavBossSub", "downloaded ${bytes.size} bytes, convert…")
+            com.javboss.android.core.log.AppLog.i("JavBossSub", "downloaded ${bytes.size} bytes, convert…")
             val text = runCatching {
                 SubtitleCodec.toSrt(rawName, SubtitleCodec.decode(bytes))
             }.getOrElse { error("字幕解析失败：${it.message}") }
@@ -297,7 +308,8 @@ class SubtitleRepository(
             if (offset != 0L) target.writeText(SubtitleCodec.shift(text, offset), Charsets.UTF_8)
 
             settings.setSubtitleSelection(code, rawName, offset)
-            android.util.Log.i(
+            markInstalled(code)
+            com.javboss.android.core.log.AppLog.i(
                 "JavBossSub",
                 "installed → ${target.absolutePath} (${target.length()}B, cues=${parseSrtCues(text).size})",
             )

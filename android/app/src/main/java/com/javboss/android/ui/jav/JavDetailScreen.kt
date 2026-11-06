@@ -189,6 +189,10 @@ private fun JavDetailContent(
                             style = MaterialTheme.typography.headlineSmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
+                        SubtitleBadge(
+                            code = item.code,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
                         Text(
                             text = formatMinutes(item.durationMin),
                             style = MaterialTheme.typography.bodyMedium,

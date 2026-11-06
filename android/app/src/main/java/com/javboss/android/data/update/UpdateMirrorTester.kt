@@ -39,7 +39,7 @@ object UpdateMirrorTester {
     suspend fun test(mirror: String, apkUrl: String): MirrorSpeed = withContext(Dispatchers.IO) {
         val url = UpdateMirror.wrap(apkUrl, mirror)
         val label = UpdateMirror.label(mirror)
-        android.util.Log.i("JavBossUpdate", "speedtest: $url")
+        com.javboss.android.core.log.AppLog.i("JavBossUpdate", "speedtest: $url")
         runCatching {
             val req = Request.Builder()
                 .url(url)

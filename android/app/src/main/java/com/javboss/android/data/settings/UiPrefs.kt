@@ -65,6 +65,8 @@ data class UiPrefs(
     val netProxyType: String = "http",
     /** 只显示/只选中文字幕 */
     val subtitleChineseOnly: Boolean = true,
+    /** 字幕语言偏好顺序（逗号分隔，靠前优先），默认 简中 > 繁中 > 其它中文 */
+    val subtitleLangOrder: String = "zh-Hans,zh-Hant,zh",
     /** 启动时自动检查 GitHub 更新 */
     val autoCheckUpdate: Boolean = true,
     /** 更新下载镜像（空 = GitHub 直连），如 https://ghfast.top/ */
@@ -111,6 +113,7 @@ object UiPrefsKeys {
     val NET_PROXY_HOST = stringPreferencesKey("ui_net_proxy_host")
     val NET_PROXY_PORT = intPreferencesKey("ui_net_proxy_port")
     val NET_PROXY_TYPE = stringPreferencesKey("ui_net_proxy_type")
+    val SUBTITLE_LANG_ORDER = stringPreferencesKey("ui_subtitle_lang_order")
     val SUBTITLE_CHINESE_ONLY = booleanPreferencesKey("ui_subtitle_chinese_only")
     val AUTO_CHECK_UPDATE = booleanPreferencesKey("ui_auto_check_update")
     val UPDATE_SKIPPED_VERSION = stringPreferencesKey("ui_update_skipped_version")
