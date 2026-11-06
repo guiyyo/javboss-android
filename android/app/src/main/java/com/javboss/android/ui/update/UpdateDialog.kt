@@ -88,7 +88,7 @@ fun UpdateDialog(
                 if (apk.isNullOrBlank()) {
                     onDismiss()
                 } else {
-                    UpdateInstaller.start(context, apk, mirror, info.latestVersion)
+                    UpdateInstaller.start(context, apk, mirror, info.latestVersion, info.sha256)
                 }
             }
             st.readyToInstall -> UpdateInstaller.retryInstall(context)

@@ -25,6 +25,7 @@ object ApkInstaller {
         url: String,
         mirror: String = "",
         fileName: String = "update.apk",
+        expectedSha256: String? = null,
         onProgress: (Float?) -> Unit = {},
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
@@ -71,7 +72,7 @@ object ApkInstaller {
             if (target.length() < 1024 * 100) error("安装包异常（${target.length()} 字节）")
 
             // 完整性校验：Release 若提供 `<apk>.sha256` 则比对；缺失时跳过（不阻塞安装）
-            verifySha256(target, realUrl, mirror, proxy)
+            verifySha256(target, realUrl, mirror, proxy, expectedSha256)
 
             onProgress(1f)
             com.javboss.android.core.log.AppLog.i("JavBossUpdate", "download done: ${target.absolutePath} ${target.length()}B")
@@ -84,8 +85,38 @@ object ApkInstaller {
      * 校验 APK 的 SHA-256：Release 旁提供 `<apk 文件名>.sha256`（十六进制）。
      * 找不到该文件时只记日志、不阻塞安装（兼容历史版本）。
      */
-    private fun verifySha256(file: File, apkUrl: String, mirror: String, proxy: java.net.Proxy?) {
+    private fun verifySha256(
+        file: File,
+        apkUrl: String,
+        mirror: String,
+        proxy: java.net.Proxy?,
+        expectedFromApi: String?,
+    ) {
         runCatching {
+            // 1) 优先用 GitHub API 给附件生成的 digest（最权威）
+            if (!expectedFromApi.isNullOrBlank()) {
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                val actual = file.inputStream().use { input ->
+                    val buf = ByteArray(1 shl 16)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        md.update(buf, 0, n)
+                    }
+                    md.digest().joinToString("") { "%02x".format(it) }
+                }
+                if (!actual.equals(expectedFromApi, ignoreCase = true)) {
+                    com.javboss.android.core.log.AppLog.e(
+                        "JavBossUpdate",
+                        "sha256(GitHub digest) 不匹配 expected=" + expectedFromApi + " actual=" + actual,
+                    )
+                    runCatching { file.delete() }
+                    error("安装包校验失败（SHA-256 与 GitHub 不一致），请重试或到 Releases 手动下载")
+                }
+                com.javboss.android.core.log.AppLog.i("JavBossUpdate", "sha256 ok (GitHub digest)")
+                return@runCatching
+            }
+            // 2) 退化为旁文件 <apk>.sha256
             val shaUrl = UpdateMirror.wrap("$apkUrl.sha256", mirror)
             val client = com.javboss.android.core.net.NetProxySupport.build(
                 proxy = proxy, connectSeconds = 10, readSeconds = 20, callSeconds = 30,

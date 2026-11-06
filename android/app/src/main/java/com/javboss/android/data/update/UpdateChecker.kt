@@ -25,6 +25,8 @@ object UpdateChecker {
         val apkUrl: String?,
         val pageUrl: String,
         val hasUpdate: Boolean,
+        /** GitHub 为附件生成的 sha256（形如 `sha256:...`，取冒号后的部分） */
+        val sha256: String? = null,
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -53,11 +55,21 @@ object UpdateChecker {
             val tag = stringOf(obj, "tag_name")
             val notes = stringOf(obj, "body")
             val page = stringOf(obj, "html_url").ifBlank { "$RELEASES_PAGE/tag/$tag" }
-            val apk = runCatching {
-                obj["assets"]?.jsonArray
-                    ?.mapNotNull { a -> runCatching { a.jsonObject["browser_download_url"]?.jsonPrimitive?.content }.getOrNull() }
-                    ?.firstOrNull { it.endsWith(".apk", ignoreCase = true) }
-            }.getOrNull()
+            var apk: String? = null
+            var sha256: String? = null
+            runCatching {
+                val assets = obj["assets"]?.jsonArray ?: return@runCatching
+                for (a in assets) {
+                    val o = a.jsonObject
+                    val url = o["browser_download_url"]?.jsonPrimitive?.content ?: continue
+                    if (!url.endsWith(".apk", ignoreCase = true)) continue
+                    apk = url
+                    sha256 = o["digest"]?.jsonPrimitive?.content
+                        ?.substringAfter("sha256:", "")
+                        ?.takeIf { it.length >= 32 }
+                    break
+                }
+            }
             val latest = tag.trim().removePrefix("v").removePrefix("V")
             com.javboss.android.core.log.AppLog.i(
                 "JavBossUpdate",
@@ -69,6 +81,7 @@ object UpdateChecker {
                 apkUrl = apk,
                 pageUrl = page,
                 hasUpdate = isNewer(latest, currentVersion),
+                sha256 = sha256,
             )
         }
     }

@@ -51,7 +51,13 @@ object UpdateInstaller {
     }
 
     /** 下载并安装（幂等：正在跑就忽略重复点击） */
-    fun start(context: Context, url: String, mirror: String, expectedVersion: String = "") {
+    fun start(
+        context: Context,
+        url: String,
+        mirror: String,
+        expectedVersion: String = "",
+        expectedSha256: String? = null,
+    ) {
         if (running) return
         // 上次已下载好的包直接复用，避免每次重下 4MB
         val cached = File(File(context.cacheDir, "apk"), "update.apk")
@@ -82,7 +88,12 @@ object UpdateInstaller {
         _state.value = State(phase = "开始下载…")
         scope.launch {
             try {
-                val result = ApkInstaller.download(context, url, mirror) { p ->
+                val result = ApkInstaller.download(
+                    context = context,
+                    url = url,
+                    mirror = mirror,
+                    expectedSha256 = expectedSha256,
+                ) { p ->
                     val cur = _state.value
                     if (cur != null && !cur.done) {
                         _state.value = cur.copy(
