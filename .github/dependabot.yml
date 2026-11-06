@@ -1,26 +1,36 @@
 version: 2
 updates:
-  # Android 依赖：只接受 minor / patch，忽略 major（跨大版本会导致编译失败或行为变化）
   - package-ecosystem: gradle
     directory: /android
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
+      interval: monthly
+    open-pull-requests-limit: 2
     labels: [ dependencies ]
     ignore:
+      # 大版本一律人工排期（Kotlin / AGP / Compose / OkHttp 是联动矩阵）
       - dependency-name: "*"
-        update-types: [ "version-update:semver-major" ]
+        update-types: ["version-update:semver-major"]
+      # 以下依赖按项目约束锁定（minSdk 22 兼容、Kotlin 2.1 矩阵、无收益），不接受任何自动升级
+      - dependency-name: "androidx.compose:compose-bom"
+      - dependency-name: "org.jetbrains.kotlin*"
+      - dependency-name: "com.android.tools.build:gradle"
+      - dependency-name: "com.squareup.okhttp3:okhttp"
+      - dependency-name: "com.squareup.okhttp3:logging-interceptor"
+      - dependency-name: "com.squareup.okhttp3:mockwebserver"
+      - dependency-name: "com.squareup.retrofit2:retrofit"
+      - dependency-name: "com.squareup.retrofit2:converter-kotlinx-serialization"
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-serialization-json"
+      - dependency-name: "androidx.core:core-ktx"
+      - dependency-name: "androidx.activity:activity-compose"
+      - dependency-name: "io.coil-kt:coil-compose"
+      - dependency-name: "io.coil-kt:coil-gif"
+      - dependency-name: "androidx.biometric:biometric"
     groups:
-      minor-and-patch:
-        patterns: [ "*" ]
-        update-types: [ "minor", "patch" ]
+      gradle-minor-patch:
+        update-types: ["minor", "patch"]
 
-  # GitHub Actions：同样只接受 minor / patch
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     labels: [ ci ]
-    ignore:
-      - dependency-name: "*"
-        update-types: [ "version-update:semver-major" ]

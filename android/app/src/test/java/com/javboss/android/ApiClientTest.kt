@@ -14,7 +14,14 @@ class ApiClientTest {
         assertEquals("http://192.168.1.1:8655/", ApiClient.normalizeBaseUrl("192.168.1.1:8655"))
         assertEquals("http://192.168.1.1:8655/", ApiClient.normalizeBaseUrl("http://192.168.1.1:8655"))
         assertEquals("https://example.com/", ApiClient.normalizeBaseUrl("https://example.com/"))
-        assertEquals("http://192.168.1.1:8655/", ApiClient.normalizeBaseUrl("  "))
+        // 首尾空白要吃掉，不能因此报错
+        assertEquals("http://192.168.1.1:8655/", ApiClient.normalizeBaseUrl(" 192.168.1.1:8655 "))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun normalizeBaseUrl_rejectsBlankAddress() {
+        // 0.36.0 起不再回落到写死地址：空地址必须直接抛错（原断言"空白 → 默认地址"是旧行为）
+        ApiClient.normalizeBaseUrl("   ")
     }
 
     @Test
