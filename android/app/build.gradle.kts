@@ -119,7 +119,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    implementation("androidx.navigation:navigation-compose:2.8.5")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
 
     // 网络
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -142,7 +142,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
 
     // 本地存储
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.datastore:datastore-preferences:1.3.0")
 
     // 指纹 / 设备凭据解锁
     implementation("androidx.biometric:biometric:1.1.0")
@@ -151,7 +151,7 @@ dependencies {
     // 注：ZXing 已移除 —— QrCodes.kt 是死代码（全仓无调用方），减少依赖面
 
     // SAF 文件夹遍历（本地字幕库）
-    implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.documentfile:documentfile:1.1.0")
 
 
     testImplementation("junit:junit:4.13.2")
