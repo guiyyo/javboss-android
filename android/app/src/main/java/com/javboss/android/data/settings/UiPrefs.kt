@@ -7,7 +7,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 
 /**
  * App 本地界面偏好（**只影响 App，不写入服务器 config**）。
+ *
+ * 加了 @Serializable 是为了 A3 备份：整份设置可直接进 JSON（导入时用默认值补齐新字段）。
  */
+@kotlinx.serialization.Serializable
 data class UiPrefs(
     val initialTab: String = "jav",
     val javSort: String = "recent",
@@ -45,6 +48,8 @@ data class UiPrefs(
     val tvPinLength: Int = 0,
     /** TV 无操作自动锁屏时间（分钟，0 = 关闭） */
     val tvIdleLockMinutes: Int = 0,
+    /** TV 密码错误后锁定到的时间戳（毫秒，0 = 未锁定）；失败次数与锁定时间落盘，重启不清零 */
+    val tvPinLockUntil: Long = 0L,
     /** 本地字幕文件夹（SAF tree uri，空 = 未选择） */
     val subtitleFolder: String = "",
     /** 在线字幕源地址（SubtitleCat 镜像可换） */
@@ -104,6 +109,11 @@ object UiPrefsKeys {
     val TV_PIN_HASH = stringPreferencesKey("ui_tv_pin_hash")
     val TV_PIN_LENGTH = intPreferencesKey("ui_tv_pin_length")
     val TV_IDLE_LOCK_MIN = intPreferencesKey("ui_tv_idle_lock_min")
+    val TV_PIN_SALT = stringPreferencesKey("ui_tv_pin_salt")
+    val TV_PIN_ITER = intPreferencesKey("ui_tv_pin_iter")
+    val TV_PIN_FAIL = intPreferencesKey("ui_tv_pin_fail")
+    val TV_PIN_LOCK_UNTIL = androidx.datastore.preferences.core.longPreferencesKey("ui_tv_pin_lock_until")
+    val SEARCH_HISTORY = stringPreferencesKey("ui_search_history")
     val SUBTITLE_FOLDER = stringPreferencesKey("ui_subtitle_folder")
     val SUBTITLE_CAT_BASE = stringPreferencesKey("ui_subtitle_cat_base")
     val SUBTITLE_PROXY = stringPreferencesKey("ui_subtitle_proxy")

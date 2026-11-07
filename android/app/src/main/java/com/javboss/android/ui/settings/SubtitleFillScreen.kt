@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
  * 批量补齐（S7）。
  *
  * 规则：已有字幕（外挂/内嵌/无需）跳过；番号字母+数字完全对上才下载；
- * 未命中的条目进入「待人工处理」，可批量标记无需字幕或稍后重试。
+ * 未命中的条目进入「待复核」，可批量标记无需字幕或稍后重试。
  */
 @Composable
 fun SubtitleFillScreen(onBack: () -> Unit) {
@@ -125,7 +125,7 @@ fun SubtitleFillScreen(onBack: () -> Unit) {
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
-        // 待人工处理
+        // 待复核
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "待复核：${manual.size} 部",

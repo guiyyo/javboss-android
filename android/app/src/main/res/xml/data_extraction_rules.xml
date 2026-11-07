@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  安全审计：allowBackup=false 在 Android 12+ 需要配套 dataExtractionRules，
+  否则云备份/设备迁移的「是否采集」行为不明确。这里显式排除会话凭据与日志。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="session-cookies.json" />
+        <exclude domain="file" path="crash/" />
+        <exclude domain="file" path="subtitles/index.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="session-cookies.json" />
+        <exclude domain="file" path="crash/" />
+    </device-transfer>
+</data-extraction-rules>

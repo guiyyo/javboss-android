@@ -76,6 +76,7 @@ data class PlayerUiState(
  * - 观看时长按服务端“会话 + 累计值”协议上报（10 秒一跳，410 重建会话）；
  * - 首次出画异步 `POST /videos/{id}/play` 计数。
  */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class PlayerViewModel : ViewModel() {
     private companion object { const val TAG = "JavBossPlayer" }
 
@@ -90,7 +91,8 @@ class PlayerViewModel : ViewModel() {
     private var queue: List<PlaybackQueueItem> = emptyList()
     private var queueIndex: Int = 0
     private var playCountReported = false
-    private var hlsFallbackTried = false
+    /** 播放源自动回落只做一次（direct ⇄ hls），避免来回弹 */
+    private var sourceFallbackTried = false
 
     private var subtitleFile: java.io.File? = null
     private var lastInfo: com.javboss.android.data.model.PlaybackInfo? = null
@@ -117,15 +119,24 @@ class PlayerViewModel : ViewModel() {
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-            // direct 播放失败 → 回落 HLS（与网页端策略一致，只回落一次）
+            // 源失败 → 自动切另一路（direct ⇄ hls 各一次）。
+            // 以前只做了 direct→hls，用户遇到的「直连明明能播却不自动切」就是这个缺口。
             val info = state.info
-            if (!hlsFallbackTried && state.usedKind == "direct" && info != null) {
-                val hls = info.sources.firstOrNull { it.kind == "hls" }
-                if (hls != null) {
-                    hlsFallbackTried = true
+            if (!sourceFallbackTried && info != null) {
+                val hasDirect = info.sources.any { it.kind == "direct" }
+                val hasHls = info.sources.any { it.kind == "hls" }
+                val targetKind = com.javboss.android.core.player.SourceChoice
+                    .fallback(state.usedKind, hasDirect, hasHls)
+                val target = targetKind?.let { k -> info.sources.firstOrNull { it.kind == k } }
+                if (target != null) {
+                    sourceFallbackTried = true
                     val position = player?.currentPosition ?: 0
+                    com.javboss.android.core.log.AppLog.w(
+                        "JavBossPlayer",
+                        "playback error on " + state.usedKind + "（" + error.errorCodeName + "）→ 自动切到 " + target.kind,
+                    )
                     viewModelScope.launch {
-                        startSource(info, hls, positionMs = position, autoPlay = true)
+                        startSource(info, target, positionMs = position, autoPlay = true)
                     }
                     return
                 }
@@ -225,8 +236,21 @@ class PlayerViewModel : ViewModel() {
     ): com.javboss.android.data.model.PlaybackSource? {
         val direct = info.sources.firstOrNull { it.kind == "direct" }
         val hls = info.sources.firstOrNull { it.kind == "hls" }
-        if (!preferDirect) return hls ?: direct
-        return if (info.preferredKind == "direct" && direct != null) direct else hls ?: direct
+        // 用户的「优先直连」优先于服务端的 conservative preferred_kind（详见 SourceChoice 注释）
+        val kind = com.javboss.android.core.player.SourceChoice.pick(
+            hasDirect = direct != null,
+            hasHls = hls != null,
+            preferDirect = preferDirect,
+        )
+        com.javboss.android.core.log.AppLog.i(
+            "JavBossPlayer",
+            "chooseSource(preferDirect=" + preferDirect + " serverPreferred=" + info.preferredKind + ") → " + kind,
+        )
+        return when (kind) {
+            "direct" -> direct
+            "hls" -> hls
+            else -> null
+        }
     }
 
     private fun startSource(
@@ -266,7 +290,14 @@ class PlayerViewModel : ViewModel() {
 
     /* -------------------------------------------------- 观看时长上报 */
 
+    /** 当前正在统计的 videoId（换片才重置累计，换源不重置）。 */
+    private var trackedVideoId: Long = 0L
+
     private fun beginWatchedTracking() {
+        // 审计 C：同一部片「直连 ⇄ HLS」换源时，startSource 会再次调到这里。
+        // 以前无条件清零 accumulatedMs 并新建会话 → 已看的时长被丢弃、服务端多建会话。
+        if (videoId != 0L && videoId == trackedVideoId && tickerJob?.isActive == true) return
+        trackedVideoId = videoId
         progressJob?.cancel()
         tickerJob?.cancel()
         sessionId = null
@@ -557,7 +588,7 @@ class PlayerViewModel : ViewModel() {
             info.sources.firstOrNull { it.kind == "direct" }
         } ?: return
         val position = player?.currentPosition ?: 0
-        hlsFallbackTried = true
+        sourceFallbackTried = true   // 手动切换后不再自动来回弹
         state = state.copy(error = null, loading = true)
         startSource(info, target, position, autoPlay = true)
     }
@@ -605,7 +636,7 @@ class PlayerViewModel : ViewModel() {
         val item = queue[index]
         flushFinal()
         playCountReported = false
-        hlsFallbackTried = false
+        sourceFallbackTried = false
         videoId = item.videoId
         locationId = item.locationId
         state = state.copy(title = item.title, loading = true, error = null, usedKind = "")

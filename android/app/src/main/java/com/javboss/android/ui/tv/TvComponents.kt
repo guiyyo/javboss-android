@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.input.key.type
@@ -38,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.javboss.android.ui.common.NetworkImage
 
 /** TV 焦点容器：遥控器移上来时放大 + 主色描边。 */
@@ -343,6 +346,8 @@ fun TvListHeader(
     onSearch: (String) -> Unit,
     onFilter: (() -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null,
+    onRandom: (() -> Unit)? = null,
+    filterFocus: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -358,11 +363,46 @@ fun TvListHeader(
             )
         }
         androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+
+        if (onRandom != null) {
+            // 随机后列表整块换新（items 先清空再填），焦点会丢：
+            // 点击后**重试**若干次把自己重新聚焦（只试一次会被随后的重组/加载覆盖）。
+            val randomFocus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+            val randomScope = androidx.compose.runtime.rememberCoroutineScope()
+            var diceFocused by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            TvFocusable(
+                onClick = {
+                    onRandom()
+                    randomScope.launch {
+                        repeat(8) {
+                            kotlinx.coroutines.delay(80)
+                            if (diceFocused) return@launch
+                            runCatching { randomFocus.requestFocus() }
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .size(56.dp)
+                    .focusRequester(randomFocus)
+                    .onFocusChanged { diceFocused = it.isFocused },
+            ) {
+                Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.Casino,
+                        contentDescription = "随便看看",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+
         if (onFilter != null) {
             TvFocusable(
                 onClick = onFilter,
                 shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.height(56.dp),
+                modifier = Modifier.height(56.dp)
+                    .then(if (filterFocus != null) Modifier.focusRequester(filterFocus) else Modifier),
             ) {
                 Box(Modifier.height(56.dp).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
                     Text(

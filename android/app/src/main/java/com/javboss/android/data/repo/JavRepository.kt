@@ -46,6 +46,11 @@ data class JavQuery(
     val pageSize: Int = 24,
     /** 本地筛选（服务端不支持该条件）：null / "watched" 已播放 / "unwatched" 未播放 */
     val watchedState: String? = null,
+    /**
+     * 随机种子（B1 盲盒）。**只有 sort = "random" 时服务端才会用它**（2026-11-06 实测，
+     * 其它排序下该参数被忽略）；传同一个 seed 排序稳定，便于翻页不重复。
+     */
+    val seed: Long? = null,
 ) {
     fun hasFilter(): Boolean =
         search.isNotBlank() || prefix != null || idolIds.isNotEmpty() || tagIds.isNotEmpty() ||
@@ -73,6 +78,7 @@ class JavRepository(private val settings: SettingsStore) {
             favoriteGroupId = query.favoriteGroupId,
             ratingMin = query.ratingMin,
             ratingMax = query.ratingMax,
+            seed = query.seed,
         )
     }
 

@@ -101,6 +101,7 @@ import kotlin.math.abs
  *  - 续播提示条；右上角竖排：横竖屏 / 截帧 / 截图页 / 画中画 / 队列；
  *  - 切后台或锁屏直接暂停；开启「自动画中画」时改为进入 PiP。
  */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerScreen(
@@ -256,10 +257,7 @@ fun PlayerScreen(
                     activity.isInPictureInPictureMode
                 if (!inPip) {
                     if (autoPiP && isPlaying && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        val params = android.app.PictureInPictureParams.Builder()
-                            .setAspectRatio(android.util.Rational(16, 9))
-                            .build()
-                        runCatching { activity?.enterPictureInPictureMode(params) }
+                        runCatching { activity?.enterPictureInPictureMode(buildPipParams(context)) }
                     } else {
                         vm.pause()
                     }
@@ -538,10 +536,7 @@ fun PlayerScreen(
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                             PlayerAction("画中画", Icons.Filled.PictureInPictureAlt) {
                                 val activity = context as? android.app.Activity ?: return@PlayerAction
-                                val params = android.app.PictureInPictureParams.Builder()
-                                    .setAspectRatio(android.util.Rational(16, 9))
-                                    .build()
-                                runCatching { activity.enterPictureInPictureMode(params) }
+                                runCatching { activity.enterPictureInPictureMode(buildPipParams(context)) }
                             }
                         }
                         if (vm.state.queueSize > 1) {
@@ -770,13 +765,38 @@ fun PlayerScreen(
 private fun speedLabel(speed: Float): String =
     if (speed == speed.toInt().toFloat()) "${speed.toInt()}.0x" else "${speed}x"
 
+/**
+ * 画中画参数（安全/体验审计 F）：
+ * targetSdk 31+ 建议同时给 setAutoEnterEnabled(true) 与 setSourceRectHint(...)，
+ * 否则进入 PiP 的转场动画质量很差（系统按「不支持的旧方式」处理）。
+ * API < 31 上这两个方法不存在，用 runCatching 包住即可。
+ */
+@androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
+private fun buildPipParams(context: android.content.Context): android.app.PictureInPictureParams {
+    val builder = android.app.PictureInPictureParams.Builder()
+        .setAspectRatio(android.util.Rational(16, 9))
+    if (android.os.Build.VERSION.SDK_INT >= 31) {
+        runCatching { builder.setAutoEnterEnabled(true) }
+        val dm = context.resources.displayMetrics
+        val w = dm.widthPixels.coerceAtLeast(1)
+        val h = (w * 9 / 16).coerceAtLeast(1)
+        val top = ((dm.heightPixels - h) / 2).coerceAtLeast(0)
+        runCatching { builder.setSourceRectHint(android.graphics.Rect(0, top, w, top + h)) }
+    }
+    return builder.build()
+}
+
 private fun format(ms: Long): String {
     if (ms <= 0) return "00:00"
     val totalSeconds = ms / 1000
     val h = totalSeconds / 3600
     val m = (totalSeconds % 3600) / 60
     val s = totalSeconds % 60
-    return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
+    return if (h > 0) {
+        String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, s)
+    } else {
+        String.format(java.util.Locale.US, "%02d:%02d", m, s)
+    }
 }
 
 @Composable

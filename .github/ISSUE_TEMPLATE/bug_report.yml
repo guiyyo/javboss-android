@@ -23,7 +23,7 @@ body:
     id: version
     attributes:
       label: App 版本
-      placeholder: 见 设置 -> 版本，例如 0.24.1
+      placeholder: 见 设置 -> 版本，例如 0.37.0
     validations:
       required: true
   - type: textarea

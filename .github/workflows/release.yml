@@ -27,15 +27,24 @@ jobs:
         working-directory: android
         run: chmod +x ./gradlew
 
-      - name: Decode keystore
+      - name: Decode keystore and write keystore.properties
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KS_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > android/release.jks
-            echo "keystore ready"
+            {
+              echo "storeFile=release.jks"
+              echo "storePassword=$KS_PASSWORD"
+              echo "keyAlias=$KS_KEY_ALIAS"
+              echo "keyPassword=$KS_KEY_PASSWORD"
+            } > android/keystore.properties
+            echo "keystore + keystore.properties ready"
           else
-            echo "no keystore secret, will build unsigned apk"
+            echo "::warning::未配置 KEYSTORE_BASE64，将产出未签名包（不可发布）"
           fi
 
       - name: Build release APK
@@ -47,9 +56,20 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
 
+      - name: Verify APK signature
+        working-directory: android
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "APK: $APK"
+          if command -v apksigner >/dev/null 2>&1; then
+            apksigner verify --print-certs "$APK" && echo "signature OK"
+          else
+            echo "::warning::apksigner 不可用，跳过签名校验"
+          fi
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: javboss-release-apk
           path: android/app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /**
@@ -20,9 +21,9 @@ import java.io.File
  * 硬性规则（用户要求）：
  * 1. **已有字幕一律跳过**：在线外挂（ONLINE）、内嵌（EMBEDDED）、已标记「无需字幕」都跳过；
  * 2. **番号必须完全对上才下载**：候选标题/文件名里的「字母+数字」必须与番号完全一致
- *    （`JUR-897` 不会匹配到 `JUR-8970`），否则不下载，进入「待人工处理」；
+ *    （`JUR-897` 不会匹配到 `JUR-8970`），否则不下载，进入「待复核」；
  * 3. **限速**：每条之间可配置间隔（默认 2 秒），避免字幕源风控/封 IP；
- * 4. 未找到的条目进入「待人工处理」列表，可批量标记「无需字幕」或重试。
+ * 4. 未找到的条目进入「待复核」列表，可批量标记「无需字幕」或重试。
  */
 object SubtitleFill {
 
@@ -47,7 +48,7 @@ object SubtitleFill {
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
-    /** 待人工处理的番号（持久化） */
+    /** 待复核的番号（持久化） */
     private val _manual = MutableStateFlow<List<String>>(emptyList())
     val manual: StateFlow<List<String>> = _manual.asStateFlow()
 
@@ -98,6 +99,18 @@ object SubtitleFill {
     // ---------------- 番号严格匹配 ----------------
 
     /** 全角→半角 + 只保留字母/数字，其余当分隔符 */
+    /**
+     * 番号白名单（安全审计：服务端返回的 code 不可信）。
+     * recordHistory / lastInstalledMachine 直接用 File(dir, code) 拼路径，
+     * 若 code 含 ../ 就能在 app 私有目录写别的文件。统一收紧到 [A-Za-z0-9_-]{2,32}。
+     */
+    private val SAFE_CODE = Regex("^[A-Za-z0-9_-]{2,32}$")
+
+    private fun safeCode(code: String): String? {
+        val c = code.trim()
+        return if (SAFE_CODE.matches(c)) c else null
+    }
+
     private fun tokens(s: String): List<String> {
         val sb = StringBuilder(s.length + 8)
         for (ch in s) {
@@ -177,16 +190,21 @@ object SubtitleFill {
         }
     }
 
+    /** 串行化 manual.json 写盘（安全审计：以前每次变更都起一个协程写同一文件）。 */
+    private val manualWriteMutex = kotlinx.coroutines.sync.Mutex()
+
     private fun saveManual() {
         val f = manualFile ?: return
         val snapshot = _manual.value
         scope.launch {
+            manualWriteMutex.withLock {
             runCatching {
                 f.parentFile?.mkdirs()
                 val arr = kotlinx.serialization.json.JsonArray(
                     snapshot.map { kotlinx.serialization.json.JsonPrimitive(it) },
                 )
                 f.writeText(arr.toString())
+            }
             }
         }
     }
@@ -201,13 +219,13 @@ object SubtitleFill {
         saveManual()
     }
 
-    /** 手动把某条标记为「本片无需字幕」并从待人工列表移除 */
+    /** 手动把某条标记为「本片无需字幕」并从待复核列表移除 */
     /** 标记「本片无需字幕」：保留在待复核列表（只是状态变了），便于回看 */
     suspend fun markNoNeed(code: String) {
         runCatching { SubtitleIndex.setNoNeed(code, true) }
     }
 
-    /** 把「待人工处理」里的全部条目标记为「本片无需字幕」并清空列表 */
+    /** 把「待复核」里的全部条目标记为「本片无需字幕」并清空列表 */
     suspend fun markAllManualNoSubtitle(context: Context): Int {
         init(context)          // 先把 manual.json 读进内存
         SubtitleIndex.init(context)
@@ -223,7 +241,7 @@ object SubtitleFill {
         return n
     }
 
-    /** 重试「待人工处理」里的全部条目（成功的会从列表移除） */
+    /** 重试「待复核」里的全部条目（成功的会从列表移除） */
     fun retryManual(context: Context, intervalMs: Long = 2000L) {
         if (_state.value.running) return
         appContext = context.applicationContext
@@ -238,7 +256,7 @@ object SubtitleFill {
                     total = list.size,
                     startedAt = System.currentTimeMillis(),
                     intervalMs = intervalMs,
-                    message = "重试待人工 ${list.size} 条…",
+                    message = "重试待复核 ${list.size} 条…",
                 )
                 com.javboss.android.core.task.TaskForegroundService.start(
                     appContext, "重试失败字幕", "正在重新搜索…",
@@ -371,12 +389,17 @@ object SubtitleFill {
         }
     }
 
+    /** R9：running 的检查与置位必须原子（原来 check-then-set 之间有竞态，可能同时起两个任务）。 */
+    private val runningFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun start(context: Context, limit: Int = 0, intervalMs: Long = 2000L) {
         com.javboss.android.core.log.AppLog.i("JavBossFill", "start() entered, running=" + _state.value.running)
-        if (_state.value.running) {
+        if (!runningFlag.compareAndSet(false, true)) {
             com.javboss.android.core.log.AppLog.w("JavBossFill", "start() ignored: already running")
             return
         }
+        // 限速参数夹在 1s~15s，避免 0/负数把字幕源打爆
+        val safeInterval = intervalMs.coerceIn(1_000L, 15_000L)
         appContext = context.applicationContext
         cancelRequested = false
         job = scope.launch {
@@ -403,6 +426,7 @@ object SubtitleFill {
                 var offset = 0
                 val pageSize = 100
                 var page = 1
+                var collectTruncated = false
                 while (!cancelRequested) {
                     val res = AppGraph.jav.list(
                         com.javboss.android.data.repo.JavQuery(pageSize = pageSize), offset,
@@ -413,6 +437,10 @@ object SubtitleFill {
                     for (item in items) {
                         val code = item.code.trim()
                         if (code.isBlank()) continue
+                        if (safeCode(code) == null) {
+                            com.javboss.android.core.log.AppLog.w("JavBossFill", "skip unsafe code: " + code.take(40))
+                            continue
+                        }
                         if (!seen.add(code)) continue
                         val st = SubtitleIndex.get(code)
                         // 唯一跳过条件：本机确实已安装过字幕文件，或用户标记了「无需字幕」
@@ -421,8 +449,10 @@ object SubtitleFill {
                         val localHit = runCatching {
                             com.javboss.android.di.AppGraph.subtitle.findLocal(code).isNotEmpty()
                         }.getOrDefault(false)
-                        // 「无字幕」的条目仍保留在待复核列表里，方便随时回看重试
-                        if (st?.noSubtitle == true) addManual(code)
+                        // 注意：这里**不再**把「无字幕」条目重新 addManual。
+                        // 以前每次开始补齐都会把 manual.json 里所有无字幕番号重加一遍，
+                        // 导致用户在待复核里点过的「忽略」下次补齐又冒出来（manual.json 本身已持久化，
+                        // 真正的待复核条目由 fillOne 匹配失败时写入）。
                         if (installed || localHit || st?.noNeedSubtitle == true || st?.noSubtitle == true) continue
                         targets.add(code)
                     }
@@ -430,14 +460,21 @@ object SubtitleFill {
                     if (items.size < pageSize) break
                     offset += pageSize
                     page++
-                    if (page > 60) break
+                    if (page > 60) {
+                        collectTruncated = true
+                        break
+                    }
                 }
 
                 val work = if (limit > 0) targets.take(limit) else targets
                 com.javboss.android.core.log.AppLog.i("JavBossFill", "targets=${targets.size} work=${work.size}")
                 _state.value = _state.value.copy(
                     total = work.size,
-                    message = if (work.isEmpty()) "没有需要补齐的条目" else "开始补齐 ${work.size} 部（间隔 ${intervalMs / 1000}s）",
+                    message = when {
+                        work.isEmpty() -> "没有需要补齐的条目"
+                        collectTruncated -> "开始补齐 " + work.size + " 部（库里超过单次收集上限 6000 部，跑完可再运行继续）"
+                        else -> "开始补齐 " + work.size + " 部（间隔 " + (safeInterval / 1000) + "s）"
+                    },
                 )
 
                 for (code in work) {
@@ -447,7 +484,7 @@ object SubtitleFill {
                     fillOne(code)
                     saveState()
                     // 限速：避免字幕源风控
-                    delay(intervalMs)
+                    delay(safeInterval)
                 }
 
                 _state.value = _state.value.copy(
@@ -473,6 +510,7 @@ object SubtitleFill {
                     )
                 }
             }
+            runningFlag.set(false)
         }
     }
 
@@ -541,7 +579,8 @@ object SubtitleFill {
     }
 
     /** 记录字幕历史（来源/是否机翻/时间），用于「升级替换」判断 */
-    private fun recordHistory(code: String, title: String, machine: Boolean) {
+    private fun recordHistory(rawCode: String, title: String, machine: Boolean) {
+        val code = safeCode(rawCode) ?: return
         scope.launch {
             runCatching {
                 val dir = java.io.File(java.io.File(appContext.filesDir, "subtitles"), code)
@@ -564,7 +603,8 @@ object SubtitleFill {
     }
 
     /** 最近一次安装的字幕是否机翻 */
-    private fun lastInstalledMachine(code: String): Boolean? {
+    private fun lastInstalledMachine(rawCode: String): Boolean? {
+        val code = safeCode(rawCode) ?: return null
         return runCatching {
             val f = java.io.File(java.io.File(appContext.filesDir, "subtitles"), "$code/history.json")
             if (!f.exists()) return null

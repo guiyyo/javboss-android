@@ -385,7 +385,7 @@ private fun VideoCard(
     AppCard(modifier = Modifier.fillMaxWidth(), onClick = onClick, onLongClick = onLongClick) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             NetworkImage(
-                url = "$baseUrl/videos/${video.id}/thumbnail",
+                url = com.javboss.android.core.media.CardImageUrl.forVideo(baseUrl, video.jav?.code, video.id),
                 modifier = Modifier.fillMaxSize(),
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             )

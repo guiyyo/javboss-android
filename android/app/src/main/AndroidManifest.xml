@@ -20,9 +20,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+        <!-- R7：调试广播接收器只允许持有签名级权限的组件触发（第三方 App 无法声明同签名权限） -->
+    <permission
+        android:name="com.javboss.android.permission.DEBUG_TRIGGER"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".JavBossApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -47,6 +54,7 @@
 
         <receiver
             android:name=".data.subtitle.ScanTriggerReceiver"
+            android:permission="com.javboss.android.permission.DEBUG_TRIGGER"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.javboss.android.DEBUG_FILL" />

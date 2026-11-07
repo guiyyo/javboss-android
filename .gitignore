@@ -14,10 +14,15 @@ local.properties
 *.aab
 releases/
 
-# --- 签名（绝对不要提交）---
+# --- 签名 / 凭据（绝对不要提交）---
 keystore.properties
 *.jks
 *.keystore
+*.pem
+*.key
+id_rsa*
+.env
+.env.*
 
 # --- IDE / OS ---
 .idea/

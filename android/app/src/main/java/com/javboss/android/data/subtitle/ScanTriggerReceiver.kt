@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 
 /** 调试用：adb 广播触发批量补齐（正式包不响应）。 */
@@ -13,7 +12,7 @@ class ScanTriggerReceiver : BroadcastReceiver() {
         if (!com.javboss.android.BuildConfig.DEBUG) return
         if (intent.action == "com.javboss.android.DEBUG_MARK_NONE") {
             com.javboss.android.core.log.AppLog.i("JavBossFill", "DEBUG_MARK_NONE broadcast")
-            GlobalScope.launch(Dispatchers.IO) {
+            com.javboss.android.di.AppGraph.appScope.launch {
                 val n = SubtitleFill.markAllManualNoSubtitle(context.applicationContext)
                 com.javboss.android.core.log.AppLog.i("JavBossFill", "marked noNeed: $n")
             }

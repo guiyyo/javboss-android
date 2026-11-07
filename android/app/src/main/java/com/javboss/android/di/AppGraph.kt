@@ -22,6 +22,13 @@ object AppGraph {
 
     val context: Context get() = appContext
 
+    /** 应用级协程作用域（没有页面生命周期的场景用它，代替 GlobalScope）。 */
+    val appScope: kotlinx.coroutines.CoroutineScope by lazy {
+        kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+        )
+    }
+
     lateinit var settings: SettingsStore
         private set
     lateinit var cookieStore: CookieStore
@@ -43,6 +50,9 @@ object AppGraph {
     lateinit var lock: com.javboss.android.core.lock.AppLockManager
         private set
     lateinit var subtitle: com.javboss.android.data.subtitle.SubtitleRepository
+        private set
+    /** 备份与恢复（A3） */
+    lateinit var backup: com.javboss.android.data.backup.BackupManager
         private set
 
     /** 供 UI 侧获取 application context（导出文件等） */
@@ -78,6 +88,11 @@ object AppGraph {
         lock = com.javboss.android.core.lock.AppLockManager(appContext)
         lock.start()
         subtitle = com.javboss.android.data.subtitle.SubtitleRepository(appContext, settings)
+        backup = com.javboss.android.data.backup.BackupManager(
+            appContext,
+            settings,
+            com.javboss.android.data.settings.PlaybackStore(appContext),
+        )
         // 字幕状态索引（L1）：异步加载，不阻塞启动
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
             .launch {

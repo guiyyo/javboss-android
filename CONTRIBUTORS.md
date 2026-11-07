@@ -47,7 +47,6 @@
 | [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) | JSON 序列化 | Apache-2.0 |
 | [DataStore](https://developer.android.com/topic/libraries/architecture/datastore) | 本地设置存储 | Apache-2.0 |
 | [Biometric](https://developer.android.com/jetpack/androidx/releases/biometric) | 指纹解锁 | Apache-2.0 |
-| [ZXing](https://github.com/zxing/zxing) | 二维码生成 | Apache-2.0 |
 
 ## 如何加入
 

@@ -90,4 +90,59 @@ class PlaybackStore(private val context: Context) {
     suspend fun setSubtitleSkipped(code: String, value: Boolean) {
         context.playbackStore.edit { it[subSkipKey(code)] = value }
     }
+
+    /* ------------------------------------------------------ 备份用（A3） */
+
+    suspend fun currentWatchHistory(): Map<String, WatchEntry> = watchHistory.first()
+
+    /** 直接写一条观看记录（备份恢复用；不做 500 条裁剪，交给 recordWatch 的常态路径）。 */
+    suspend fun putWatchEntry(key: String, entry: WatchEntry) {
+        context.playbackStore.edit { prefs ->
+            val map = decode(prefs[WATCH_HISTORY]).toMutableMap()
+            map[key] = entry
+            prefs[WATCH_HISTORY] = json.encodeToString(
+                WatchHistorySnapshot.serializer(),
+                WatchHistorySnapshot(map),
+            )
+        }
+    }
+
+    /** 导出所有「每部作品字幕选择/偏移/免字幕」；key 用去掉分隔符的大写番号。 */
+    suspend fun exportSubtitlePrefs(): Map<String, com.javboss.android.core.backup.SubtitlePrefEntry> {
+        val prefs = context.playbackStore.data.first().asMap()
+        val out = LinkedHashMap<String, com.javboss.android.core.backup.SubtitlePrefEntry>()
+        fun codeOf(name: String, prefix: String): String? =
+            if (name.startsWith(prefix)) name.removePrefix(prefix) else null
+
+        for ((k, v) in prefs) {
+            val name = k.name
+            when {
+                name.startsWith("sub_sel_") -> {
+                    val code = codeOf(name, "sub_sel_")!!
+                    val cur = out[code] ?: com.javboss.android.core.backup.SubtitlePrefEntry()
+                    out[code] = cur.copy(name = (v as? String).orEmpty())
+                }
+                name.startsWith("sub_off_") -> {
+                    val code = codeOf(name, "sub_off_")!!
+                    val cur = out[code] ?: com.javboss.android.core.backup.SubtitlePrefEntry()
+                    out[code] = cur.copy(offsetMs = (v as? Long) ?: 0L)
+                }
+                name.startsWith("sub_skip_") -> {
+                    val code = codeOf(name, "sub_skip_")!!
+                    val cur = out[code] ?: com.javboss.android.core.backup.SubtitlePrefEntry()
+                    out[code] = cur.copy(skipped = (v as? Boolean) ?: false)
+                }
+            }
+        }
+        return out
+    }
+
+    /** 写回一条字幕偏好（key 与 exportSubtitlePrefs 一致）。 */
+    suspend fun putSubtitlePref(codeKey: String, entry: com.javboss.android.core.backup.SubtitlePrefEntry) {
+        context.playbackStore.edit { prefs ->
+            if (entry.name.isNotBlank()) prefs[subSelKey(codeKey)] = entry.name
+            prefs[subOffKey(codeKey)] = entry.offsetMs
+            prefs[subSkipKey(codeKey)] = entry.skipped
+        }
+    }
 }

@@ -289,7 +289,13 @@ class SubtitleCatProvider(
     companion object {
         const val DEFAULT_BASE = "https://subtitlecat.com"
 
-        /** 默认字幕源（同一站点的多个入口，用于超时换源） */
+        /**
+         * 默认字幕源（同一站点的多个入口，用于超时换源）。
+         *
+         * 产品决定（用户 2026-11-07）：**https 不强制**，由用户自己判断；
+         * 所以 https 入口优先，全部失败后仍保留 http 兜底（只泄露番号，不含账号）。
+         * 若用户在意明文，可在设置里填自己的字幕源/反代（支持 http 或 https）。
+         */
         // 实测（2026-10-31）：裸域 subtitlecat.com 经常 15s 超时，www 正常 → www 放前面
         val DEFAULT_SOURCES = listOf(
             "https://www.subtitlecat.com",

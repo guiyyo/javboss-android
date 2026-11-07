@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun UpdateCheckerHost() {
+    val hostScope = androidx.compose.runtime.rememberCoroutineScope()
     var pending by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
     var mirror by remember { mutableStateOf("") }
 
@@ -98,7 +99,7 @@ fun UpdateCheckerHost() {
             mirror = mirror,
             onDismiss = { pending = null },
             onSkipVersion = {
-                kotlinx.coroutines.MainScope().launch {
+                hostScope.launch {
                     runCatching { AppGraph.settings.setUpdateSkippedVersion(info.latestVersion) }
                 }
                 pending = null

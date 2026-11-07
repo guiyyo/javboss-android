@@ -14,6 +14,7 @@ import com.javboss.android.ui.tv.TvAppRoot
 
 /** Android TV 入口（遥控器交互）：桌面上与手机端并存。 */
 class TvMainActivity : ComponentActivity() {
+    @android.annotation.SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         // 遥控器“设置”键 → 应用设置页（在 Compose 之前拦截）
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
@@ -31,10 +32,9 @@ class TvMainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // TV 端不启用 FLAG_SECURE（用户要求，便于截屏/分享）
         runCatching { AppGraph.init(applicationContext) }
+        com.javboss.android.core.task.NotificationPermission.ensure(this)
         enableEdgeToEdge()
-        val mode = runCatching {
-            kotlinx.coroutines.runBlocking { AppGraph.settings.uiPrefs.first { true }.uiMode }
-        }.getOrDefault("auto")
+        val mode = runCatching { AppGraph.settings.uiPrefsSnapshot().uiMode }.getOrDefault("auto")
         setContent {
             JavBossTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {

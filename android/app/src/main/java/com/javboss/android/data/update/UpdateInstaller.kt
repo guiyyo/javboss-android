@@ -64,13 +64,23 @@ object UpdateInstaller {
         val expectedName = expectedVersion
         if (cached.exists() && cached.length() > 1_000_000) {
             val ver = apkVersion(context, cached)
-            val ok = ver != null && expectedName.isNotBlank() && ver.second == expectedName
+            val versionOk = ver != null && expectedName.isNotBlank() && ver.second == expectedName
+            // A-L4：缓存包还要复核摘要（下载时写在同目录的 .sha256），否则「缓存被替换」可绕过校验
+            val digestOk = ApkInstaller.verifyExisting(cached)
+            val releaseDigestOk = expectedSha256.isNullOrBlank() ||
+                com.javboss.android.core.update.UpdateSecurity.digestsMatch(
+                    expectedSha256,
+                    runCatching { java.io.File(cached.parentFile, cached.name + ".sha256").readText() }.getOrNull(),
+                )
+            val ok = versionOk && digestOk && releaseDigestOk
             if (!ok) {
                 com.javboss.android.core.log.AppLog.w(
                     "JavBossUpdate",
-                    "cached apk version mismatch: " + ver + " expected=" + expectedName + "，删除后重新下载",
+                    "cached apk rejected: ver=" + ver + " versionOk=" + versionOk +
+                        " digestOk=" + digestOk + " releaseDigestOk=" + releaseDigestOk + "，删除后重新下载",
                 )
                 runCatching { cached.delete() }
+                runCatching { java.io.File(cached.parentFile, cached.name + ".sha256").delete() }
             }
         }
         if (cached.exists() && cached.length() > 1_000_000) {
@@ -106,6 +116,16 @@ object UpdateInstaller {
                     .onSuccess { file ->
                         // 下载完成后校验版本，避免装到旧包/错误包
                         val ver = apkVersion(context, file)
+                        // A-L4：解析不出 APK 版本（ver == null）说明包有问题，不能再「跳过版本校验直接装」
+                        if (expectedVersion.isNotBlank() && ver == null) {
+                            _state.value = State(
+                                phase = "安装包无法解析",
+                                done = true,
+                                error = "下载到的文件不是可安装的 APK（无法读取版本信息），已中止",
+                            )
+                            runCatching { file.delete() }
+                            return@onSuccess
+                        }
                         if (expectedVersion.isNotBlank() && ver != null && ver.second != expectedVersion) {
                             com.javboss.android.core.log.AppLog.w(
                                 "JavBossUpdate",
@@ -152,6 +172,13 @@ object UpdateInstaller {
         val file = File(path)
         if (!file.exists()) {
             _state.value = _state.value?.copy(done = true, error = "安装包已丢失，请重新下载")
+            return
+        }
+        // A-L4：重试安装前复核摘要，避免安装期间文件被替换
+        if (!ApkInstaller.verifyExisting(file)) {
+            com.javboss.android.core.log.AppLog.w("JavBossUpdate", "retryInstall: 摘要复核失败，丢弃缓存包")
+            runCatching { file.delete() }
+            _state.value = _state.value?.copy(done = true, error = "安装包校验失败，请重新下载")
             return
         }
         install(context, file)

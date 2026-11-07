@@ -103,6 +103,9 @@ class JavListViewModel : ViewModel() {
     private var initJob: kotlinx.coroutines.Job? = null
 
     init {
+        viewModelScope.launch {
+            AppGraph.settings.searchHistory.collect { searchHistory = it }
+        }
         initJob = viewModelScope.launch {
             val prefs = AppGraph.settings.uiPrefs.first()
             // 恢复上次的筛选/搜索
@@ -183,9 +186,82 @@ class JavListViewModel : ViewModel() {
         refresh()
     }
 
+    /** 搜索历史（最近在前，最多 12 条） */
+    var searchHistory by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    /** 「随便看看」失败/为空的提示 */
+    var randomHint by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissRandomHint() {
+        randomHint = null
+    }
+
+    /**
+     * 提交搜索：先做番号归一化（`snos079` → `SNOS-079`，服务端对连字符敏感），
+     * 再记一条搜索历史。
+     */
     fun setSearch(text: String) {
-        if (query.search == text) return
-        query = query.copy(search = text)
+        val normalized = com.javboss.android.core.text.SearchText.forSearch(text)
+        if (query.search == normalized) {
+            if (normalized.isNotBlank()) recordSearch(normalized)
+            return
+        }
+        query = query.copy(search = normalized)
+        if (normalized.isNotBlank()) recordSearch(normalized)
+        refresh()
+    }
+
+    private fun recordSearch(text: String) {
+        viewModelScope.launch { AppGraph.settings.addSearchHistory(text) }
+    }
+
+    fun clearSearchHistory() {
+        viewModelScope.launch { AppGraph.settings.clearSearchHistory() }
+    }
+
+    /** 是否处于「随机 10 部」视图（列表被随机结果临时替换） */
+    var randomMode by mutableStateOf(false)
+        private set
+
+    /**
+     * 盲盒（改版）：随机取 10 部**直接替换当前列表**，由用户自己点——不弹窗、不自动进详情。
+     * 点卡片与平时一样进详情；点「随机 10 部 ✕」清除即恢复原列表。
+     */
+    fun randomTen(count: Int = 10) {
+        viewModelScope.launch {
+            randomHint = null
+            val seed = kotlin.random.Random.nextLong(1L, 1_000_000L)
+            val q = query.copy(
+                pageSize = count.coerceIn(4, 60),
+                sort = "random",
+                seed = seed,
+                watchedState = null,
+            )
+            when (val result = AppGraph.jav.list(q, offset = 0)) {
+                is ApiResult.Success -> {
+                    val list = result.data.items
+                    if (list.isEmpty()) {
+                        randomHint = "当前筛选下没有可随机的作品"
+                        return@launch
+                    }
+                    generation++          // 作废在飞的 loadMore，避免旧结果混进来
+                    items = list
+                    total = list.size.toLong()
+                    endReached = true     // 随机视图只展示这一批，不再无限翻页
+                    error = null
+                    randomMode = true
+                }
+                is ApiResult.Failure -> randomHint = "随机失败：" + result.message
+            }
+        }
+    }
+
+    /** 退出随机视图，回到正常列表。 */
+    fun clearRandom() {
+        if (!randomMode) return
+        randomMode = false
         refresh()
     }
 
@@ -244,6 +320,13 @@ class JavListViewModel : ViewModel() {
     private var serverOffset = 0
     private var serverTotal = 0L
 
+    /**
+     * 查询代际：refresh 时自增。
+     * loadMore 在飞的请求如果属于旧代际，结果必须丢弃 —— 否则切筛选/改排序后，
+     * 旧的下一页会把上一组条件的结果拼进新列表（TvGridViewModel 早就有这道防护，手机端之前漏了）。
+     */
+    private var generation = 0
+
     private fun applyWatchedFilter(list: List<JavItem>): List<JavItem> = when (query.watchedState) {
         "watched" -> list.filter { it.watchedMs > 0 }
         "unwatched" -> list.filter { it.watchedMs <= 0 }
@@ -260,10 +343,13 @@ class JavListViewModel : ViewModel() {
         endReached = false
         serverOffset = 0
         serverTotal = 0
+        generation++
+        val gen = generation
         viewModelScope.launch {
             var collected = emptyList<JavItem>()
             var attempts = 0
             while (true) {
+                if (gen != generation) return@launch   // 期间又发起了一次 refresh：本次结果作废
                 when (val result = AppGraph.jav.list(query, offset = serverOffset)) {
                     is ApiResult.Success -> {
                         val raw = result.data.items
@@ -281,6 +367,7 @@ class JavListViewModel : ViewModel() {
                 // 本地筛选后为空时，自动多翻几页，避免出现空白列表
                 if (collected.isNotEmpty() || endReached || attempts >= 4) break
             }
+            if (gen != generation) return@launch
             items = collected
             if (!navFilterApplied) {
                 runCatching {
@@ -303,10 +390,12 @@ class JavListViewModel : ViewModel() {
     fun loadMore() {
         if (loading || loadingMore || endReached) return
         loadingMore = true
+        val gen = generation
         viewModelScope.launch {
             var added = emptyList<JavItem>()
             var attempts = 0
             while (true) {
+                if (gen != generation) return@launch   // 期间换了筛选条件：这页数据属于旧查询，丢弃
                 when (val result = AppGraph.jav.list(query, offset = serverOffset)) {
                     is ApiResult.Success -> {
                         val raw = result.data.items
@@ -323,6 +412,7 @@ class JavListViewModel : ViewModel() {
                 attempts++
                 if (added.isNotEmpty() || endReached || attempts >= 4) break
             }
+            if (gen != generation) { loadingMore = false; return@launch }
             items = items + added
             total = if (query.watchedState != null) items.size.toLong() else serverTotal
             loadingMore = false

@@ -1,5 +1,8 @@
 package com.javboss.android.data.screenshot
 
+import com.javboss.android.core.net.toCookieHeaderFor
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
@@ -32,7 +35,10 @@ object FrameCapture {
             }
             val url = ApiClient.absoluteUrl(baseUrl, path)
             val host = java.net.URI(url).host ?: ""
-            val cookie = AppGraph.cookieStore.cookiesFor(host).toCookieHeader()
+            // R1：必须走带 Secure 过滤的版本 —— valuesFor() 不看 secure，把 https 下发的 Secure Cookie
+            // 塞进 http 明文请求属于降级泄露。toCookieHeaderFor() 会按 url.isHttps 过滤并丢掉过期项。
+            val httpUrl = url.toHttpUrlOrNull()
+            val cookie = AppGraph.cookieStore.cookiesFor(host).toCookieHeaderFor(httpUrl)
             val headers = mutableMapOf("User-Agent" to "JavBossAndroid")
             if (cookie.isNotBlank()) headers["Cookie"] = cookie
 

@@ -29,8 +29,8 @@ android {
         applicationId = "com.javboss.android"
         minSdk = if (compatMode) 24 else 22
         targetSdk = 36
-        versionCode = 136
-        versionName = "0.36.13"
+        versionCode = 142
+        versionName = "0.37.0"
         ndk {
             // 电视盒子多为 32 位（armeabi-v7a），手机多为 64 位（arm64-v8a）；两个都打进去，同一个包两端可装
             abiFilters += if (compatMode) {
@@ -148,7 +148,7 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
 
     // 二维码（TV 诊断日志扫码取文字）
-    implementation("com.google.zxing:core:3.5.3")
+    // 注：ZXing 已移除 —— QrCodes.kt 是死代码（全仓无调用方），减少依赖面
 
     // SAF 文件夹遍历（本地字幕库）
     implementation("androidx.documentfile:documentfile:1.0.1")

@@ -54,29 +54,65 @@ object SubtitleExporter {
     }
 
     /** 从 ZIP 恢复字幕：条目名 `<番号>.<语言>.srt` → subtitles/<番号>/active.srt */
-    suspend fun importZipFrom(context: Context, zip: java.io.File): Int {
+    /**
+     * 从 ZIP 恢复字幕。
+     *
+     * R5：加限额与白名单（经典 Zip Slip 本来不成立，但仍可被塞入大量条目/超大文件/任意名字耗尽磁盘或覆盖无关番号）：
+     *  - 条目数 ≤ 20000；单条解压后 ≤ 20MB；累计 ≤ 300MB；压缩比 > 500:1 视为异常跳过；
+     *  - 只接受 <番号>.<语言>.srt 形式，番号必须过 [A-Za-z0-9_-]{2,32} 白名单。
+     */
+    /** ZIP 导入结果：导入了多少条、因不合规跳过多少条。 */
+    data class ZipImportResult(val imported: Int, val skipped: Int)
+
+    /** 兼容旧调用方：只关心导入条数。 */
+    suspend fun importZipFrom(context: Context, zip: java.io.File): Int = importZipDetailed(context, zip).imported
+
+    suspend fun importZipDetailed(context: Context, zip: java.io.File): ZipImportResult {
+        val maxEntries = 20_000
+        val maxEntryBytes = 20L * 1024 * 1024
+        val maxTotalBytes = 300L * 1024 * 1024
+        val safeCode = Regex("^[A-Za-z0-9_-]{2,32}$")
         var n = 0
+        var skipped = 0
+        var total = 0L
+        var entries = 0
         val root = java.io.File(context.filesDir, "subtitles")
         java.util.zip.ZipFile(zip).use { zf ->
             zf.entries().asSequence().forEach { e ->
                 if (e.isDirectory) return@forEach
-                val name = e.name
+                if (++entries > maxEntries) { skipped++; return@use }
+                val name = e.name.substringAfterLast('/')
+                if (!name.endsWith(".srt", ignoreCase = true)) { skipped++; return@forEach }
                 val code = name.substringBefore('.')
-                if (code.isBlank()) return@forEach
+                if (!safeCode.matches(code)) { skipped++; return@forEach }
+                if (e.size > maxEntryBytes) { skipped++; return@forEach }
+                if (e.compressedSize > 0 && e.size / e.compressedSize > 500) { skipped++; return@forEach }
                 val dir = java.io.File(root, code).apply { mkdirs() }
                 val target = java.io.File(dir, "active.srt")
                 if (target.exists()) {
                     runCatching { target.copyTo(java.io.File(dir, "active.srt.bak"), overwrite = true) }
                 }
                 runCatching {
+                    var written = 0L
                     zf.getInputStream(e).use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
+                        target.outputStream().use { output ->
+                            val buf = ByteArray(1 shl 16)
+                            while (true) {
+                                val r = input.read(buf)
+                                if (r <= 0) break
+                                written += r
+                                if (written > maxEntryBytes) error("字幕条目过大")
+                                total += r
+                                if (total > maxTotalBytes) error("压缩包解压体积超限")
+                                output.write(buf, 0, r)
+                            }
+                        }
                     }
                     n++
-                }
+                }.onFailure { skipped++ }
             }
         }
-        return n
+        return ZipImportResult(imported = n, skipped = skipped)
     }
 
     private fun guessLanguage(code: String, state: SubtitleState?): String {

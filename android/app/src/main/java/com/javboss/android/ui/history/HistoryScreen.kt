@@ -159,11 +159,7 @@ private fun HistoryCard(
 
     AppCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Box(Modifier.fillMaxWidth().aspectRatio(800f / 538f)) {
-            val coverUrl = if (!video.jav?.code.isNullOrBlank()) {
-                "${baseUrl}/jav/${video.jav!!.code}/cover"
-            } else {
-                "${baseUrl}/videos/${video.id}/thumbnail"
-            }
+            val coverUrl = com.javboss.android.core.media.CardImageUrl.forVideo(baseUrl, video.jav?.code, video.id)
             NetworkImage(url = coverUrl, modifier = Modifier.fillMaxSize())
 
             Box(

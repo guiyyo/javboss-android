@@ -33,7 +33,27 @@ object Diagnostics {
         }
     }
 
-    fun buildReport(context: Context): String = buildString {
+    /**
+     * 生成诊断报告。
+     * [redact] 默认 true：IP / 端口 / Cookie / 用户名 / 邮箱一律脱敏（F3），
+     * 错误码、堆栈、耗时等排障依据保留。
+     */
+    fun buildReport(context: Context, redact: Boolean = true): String = redactIfNeeded(
+        buildRawReport(context),
+        redact,
+    )
+
+    private fun redactIfNeeded(raw: String, redact: Boolean): String =
+        if (redact) LogRedactor.redact(raw) else raw
+
+    /** 复制为 Issue 模板（脱敏 + Markdown 代码块）。 */
+    fun buildIssueTemplate(context: Context): String =
+        LogRedactor.redactedTemplate(
+            buildRawReport(context),
+            com.javboss.android.BuildConfig.VERSION_NAME,
+        )
+
+    private fun buildRawReport(context: Context): String = buildString {
         appendLine("=== JavBoss Android 诊断日志 ===")
         appendLine("生成时间: " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
         appendLine("App 版本: " + com.javboss.android.BuildConfig.VERSION_NAME + " (" + com.javboss.android.BuildConfig.VERSION_CODE + ")")

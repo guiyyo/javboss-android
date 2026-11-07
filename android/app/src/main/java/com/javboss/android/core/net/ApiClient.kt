@@ -83,6 +83,10 @@ object ApiClient {
         var url = raw.trim()
         // 不要回落到任何写死的地址：本项目是自建服务端，地址必须由用户填写
         require(url.isNotEmpty()) { "未配置服务器地址，请先在登录页填写（例如 http://192.168.1.1:8655）" }
+        // R10：只接受 http / https，其它 scheme（file://、content://、javascript: 等）一律拒绝
+        if (url.contains("://") && !url.startsWith("http://", true) && !url.startsWith("https://", true)) {
+            throw IllegalArgumentException("服务器地址只支持 http:// 或 https://")
+        }
         if (!url.startsWith("http://") && !url.startsWith("https://")) url = "http://$url"
         if (!url.endsWith("/")) url = "$url/"
         return url

@@ -39,8 +39,26 @@ class AuthRepository(private val settings: SettingsStore) {
 
     suspend fun logout(): ApiResult<Unit> = apiCall {
         runCatching { api().logout() }
-        settings.setSessionCookie(null)
+        logoutLocally()
         Unit
+    }
+
+    /**
+     * 本地登出（不发网络请求）：清会话 Cookie + Cookie 存储 + 运行日志 + 崩溃记录。
+     *
+     * 安全审计 A-2：「TV 端退出登录无效」—— 原来 TvApp 只是把 UI 切回登录页，
+     * Cookie 还在，冷启动又被 `authStatus()` 判成已登录；手机端靠 SettingsViewModel 额外清，
+     * 两端行为不一致。现在统一走这里。
+     * 另外退出登录后不清日志的话，同进程内换账号导出的诊断报告仍带前一个账号的番号/标题/URL。
+     */
+    suspend fun logoutLocally() {
+        runCatching { settings.setSessionCookie(null) }
+        runCatching { com.javboss.android.di.AppGraph.cookieStore.clear() }
+        runCatching { com.javboss.android.core.log.AppLog.clear() }
+        runCatching {
+            com.javboss.android.core.log.CrashLogger.clear(com.javboss.android.di.AppGraph.context)
+        }
+        // 注意：不清 SubtitleFill 的「待复核」列表 —— 那是用户数据，重新登录后应该还在
     }
 }
 

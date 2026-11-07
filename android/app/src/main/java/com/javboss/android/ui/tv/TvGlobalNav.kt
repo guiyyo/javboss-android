@@ -13,4 +13,8 @@ object TvGlobalNav {
     fun requestOpenSettings() {
         openSettings.tryEmit(Unit)
     }
+
+    /** 刚在本会话里设置/修改了 TV 密码：置 true 后主界面直接把当前会话视为已解锁，
+     *  否则用户刚设完密码就被立刻要求再输一遍（0.36.14 修）。 */
+    val pinJustSet = kotlinx.coroutines.flow.MutableStateFlow(false)
 }

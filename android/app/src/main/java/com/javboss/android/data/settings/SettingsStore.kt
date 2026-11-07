@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "javboss_settings")
@@ -70,6 +71,32 @@ class SettingsStore(private val context: Context) {
 
     /* ---------------- 本地界面偏好（只影响 App） ---------------- */
 
+    /** 内存快照：后台收集时更新，供「必须在同步上下文里读设置」的地方使用（见 uiPrefsSnapshot）。 */
+    @Volatile private var cachedUiPrefs: UiPrefs? = null
+    @Volatile private var cachedServerUrl: String? = null
+
+    private val warmScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+
+    init {
+        warmScope.launch { runCatching { uiPrefs.collect { cachedUiPrefs = it } } }
+        warmScope.launch { runCatching { serverUrl.collect { cachedServerUrl = it } } }
+    }
+
+    /**
+     * 同步读设置快照（不阻塞主线程）。
+     *
+     * 安全/性能审计 A：MainActivity/TvMainActivity 的 onCreate 以前用 runBlocking 读 DataStore，
+     * 慢设备上冷启动首帧会卡住甚至 ANR。现在后台常驻收集，这里直接读内存；
+     * 只有「进程刚起、快照还没热」时才回落到一次 runBlocking。
+     */
+    fun uiPrefsSnapshot(): UiPrefs = cachedUiPrefs ?: kotlinx.coroutines.runBlocking { uiPrefs.first() }
+
+    /** 同步读服务端地址（同上）。 */
+    fun currentServerUrlCached(): String =
+        cachedServerUrl ?: kotlinx.coroutines.runBlocking { currentServerUrl() }
+
     val uiPrefs: Flow<UiPrefs> = context.dataStore.data.map { p ->
         UiPrefs(
             initialTab = p[UiPrefsKeys.INITIAL_TAB] ?: "jav",
@@ -97,6 +124,7 @@ class SettingsStore(private val context: Context) {
             tvPinHash = p[UiPrefsKeys.TV_PIN_HASH] ?: "",
             tvPinLength = p[UiPrefsKeys.TV_PIN_LENGTH] ?: 0,
             tvIdleLockMinutes = p[UiPrefsKeys.TV_IDLE_LOCK_MIN] ?: 0,
+            tvPinLockUntil = p[UiPrefsKeys.TV_PIN_LOCK_UNTIL] ?: 0L,
             subtitleFolder = p[UiPrefsKeys.SUBTITLE_FOLDER] ?: "",
             subtitleCatBase = p[UiPrefsKeys.SUBTITLE_CAT_BASE] ?: "https://subtitlecat.com",
             subtitleProxy = p[UiPrefsKeys.SUBTITLE_PROXY] ?: "",
@@ -109,7 +137,8 @@ class SettingsStore(private val context: Context) {
             subtitleChineseOnly = p[UiPrefsKeys.SUBTITLE_CHINESE_ONLY] ?: true,
             subtitleLangOrder = p[UiPrefsKeys.SUBTITLE_LANG_ORDER] ?: "zh-Hans,zh-Hant,zh",
             autoCheckUpdate = p[UiPrefsKeys.AUTO_CHECK_UPDATE] ?: true,
-            updateMirror = p[UiPrefsKeys.UPDATE_MIRROR] ?: "",
+            updateMirror = com.javboss.android.core.update.UpdateSecurity
+                .sanitizeMirror(p[UiPrefsKeys.UPDATE_MIRROR] ?: ""),
             updateMirrorLastTest = p[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] ?: 0L,
             playerSurfaceView = p[UiPrefsKeys.PLAYER_SURFACE_VIEW] ?: false,
         )
@@ -145,8 +174,12 @@ class SettingsStore(private val context: Context) {
     suspend fun setUpdateMirrorLastTest(value: Long) =
         context.dataStore.edit { it[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] = value }
 
+    /** R2：存储层也做校验 —— 非 https / 裸域名一律存成空串（= GitHub 直连），避免配置里留非法值。 */
     suspend fun setUpdateMirror(value: String) =
-        context.dataStore.edit { it[UiPrefsKeys.UPDATE_MIRROR] = value }
+        context.dataStore.edit {
+            it[UiPrefsKeys.UPDATE_MIRROR] =
+                com.javboss.android.core.update.UpdateSecurity.sanitizeMirror(value)
+        }
 
     suspend fun setAutoCheckUpdate(value: Boolean) =
         context.dataStore.edit { it[UiPrefsKeys.AUTO_CHECK_UPDATE] = value }
@@ -252,26 +285,191 @@ class SettingsStore(private val context: Context) {
     suspend fun setTvPinEnabled(value: Boolean) =
         context.dataStore.edit { it[UiPrefsKeys.TV_PIN_ENABLED] = value }
 
-    /** 设置/修改 TV 密码（入参是明文 4-6 位数字，内部存 SHA-256）。 */
+    /**
+     * 设置/修改 TV 密码（明文 4~6 位数字）。
+     *
+     * F2：随机盐 + 6000 轮迭代 SHA-256（以前是裸 SHA-256）。
+     * 注意：0.36.13 之前设置密码的对话框只调了 setTvPinEnabled(true)，从没调过本方法，
+     * 所以存量用户「开着锁但没有密码」，升级后需要重新设置一次。
+     */
     suspend fun setTvPin(pin: String) {
-        val hash = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(pin.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+        val salt = com.javboss.android.core.lock.PinHasher.randomSalt()
+        val iterations = com.javboss.android.core.lock.PinHasher.ITERATIONS
+        val hash = com.javboss.android.core.lock.PinHasher.hash(pin, salt, iterations)
         context.dataStore.edit {
             it[UiPrefsKeys.TV_PIN_HASH] = hash
-                it[UiPrefsKeys.TV_PIN_LENGTH] = pin.length
+            it[UiPrefsKeys.TV_PIN_SALT] = salt
+            it[UiPrefsKeys.TV_PIN_ITER] = iterations
+            it[UiPrefsKeys.TV_PIN_LENGTH] = pin.length
             it[UiPrefsKeys.TV_PIN_ENABLED] = true
+            it[UiPrefsKeys.TV_PIN_FAIL] = 0
+            it[UiPrefsKeys.TV_PIN_LOCK_UNTIL] = 0L
         }
     }
 
-    suspend fun verifyTvPin(pin: String): Boolean {
-        val expected = uiPrefs.first().tvPinHash
-        if (expected.isBlank()) return true
-        val hash = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(pin.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        return hash == expected
+    /** 关闭密码锁并清掉旧哈希（避免下次开启时残留一个谁都不知道的密码）。 */
+    suspend fun clearTvPin() {
+        context.dataStore.edit {
+            it[UiPrefsKeys.TV_PIN_ENABLED] = false
+            it.remove(UiPrefsKeys.TV_PIN_HASH)
+            it.remove(UiPrefsKeys.TV_PIN_SALT)
+            it.remove(UiPrefsKeys.TV_PIN_ITER)
+            it.remove(UiPrefsKeys.TV_PIN_LENGTH)
+            it.remove(UiPrefsKeys.TV_PIN_FAIL)
+            it.remove(UiPrefsKeys.TV_PIN_LOCK_UNTIL)
+        }
     }
+
+    /**
+     * 校验 TV 密码。失败次数与锁定截止时间**落盘**（以前只存在页面内存里，退出重进就归零）。
+     * 退避：5 次 → 30 秒，10 次 → 1 分钟，15 次 → 5 分钟。
+     */
+    suspend fun verifyTvPin(pin: String): Boolean {
+        val p = context.dataStore.data.first()
+        val expected = p[UiPrefsKeys.TV_PIN_HASH] ?: ""
+        if (expected.isBlank()) return true
+        val now = System.currentTimeMillis()
+        if ((p[UiPrefsKeys.TV_PIN_LOCK_UNTIL] ?: 0L) > now) return false
+        val salt = p[UiPrefsKeys.TV_PIN_SALT] ?: ""
+        val iterations = p[UiPrefsKeys.TV_PIN_ITER] ?: com.javboss.android.core.lock.PinHasher.ITERATIONS
+        val ok = if (salt.isBlank()) {
+            com.javboss.android.core.lock.PinHasher.verifyLegacy(pin, expected)
+        } else {
+            com.javboss.android.core.lock.PinHasher.verify(pin, salt, iterations, expected)
+        }
+        context.dataStore.edit { prefs ->
+            if (ok) {
+                prefs[UiPrefsKeys.TV_PIN_FAIL] = 0
+                prefs[UiPrefsKeys.TV_PIN_LOCK_UNTIL] = 0L
+                if (salt.isBlank()) {
+                    // 老的无盐哈希：校验通过时顺手换成加盐值，用户无感
+                    val newSalt = com.javboss.android.core.lock.PinHasher.randomSalt()
+                    prefs[UiPrefsKeys.TV_PIN_SALT] = newSalt
+                    prefs[UiPrefsKeys.TV_PIN_ITER] = com.javboss.android.core.lock.PinHasher.ITERATIONS
+                    prefs[UiPrefsKeys.TV_PIN_HASH] = com.javboss.android.core.lock.PinHasher.hash(
+                        pin,
+                        newSalt,
+                        com.javboss.android.core.lock.PinHasher.ITERATIONS,
+                    )
+                }
+            } else {
+                val fails = (prefs[UiPrefsKeys.TV_PIN_FAIL] ?: 0) + 1
+                prefs[UiPrefsKeys.TV_PIN_FAIL] = fails
+                val backoff = when {
+                    fails >= 15 -> 300_000L
+                    fails >= 10 -> 60_000L
+                    fails >= 5 -> 30_000L
+                    else -> 0L
+                }
+                if (backoff > 0) prefs[UiPrefsKeys.TV_PIN_LOCK_UNTIL] = now + backoff
+                if (fails > 15) prefs[UiPrefsKeys.TV_PIN_FAIL] = 15
+            }
+        }
+        return ok
+    }
+
+    /** 剩余锁定毫秒（0 = 未锁定）。 */
+    suspend fun tvPinLockRemainingMs(): Long {
+        val p = context.dataStore.data.first()
+        val until = p[UiPrefsKeys.TV_PIN_LOCK_UNTIL] ?: 0L
+        return (until - System.currentTimeMillis()).coerceAtLeast(0L)
+    }
+
+    /** 已失败次数（用于提示「还可尝试 N 次」）。 */
+    suspend fun tvPinFailCount(): Int = context.dataStore.data.first()[UiPrefsKeys.TV_PIN_FAIL] ?: 0
+
+    /* ---------- 搜索历史（F1 快赢包：搜索番号归一化 + 历史） ---------- */
+
+    val searchHistory: kotlinx.coroutines.flow.Flow<List<String>> = context.dataStore.data.map { p ->
+        (p[UiPrefsKeys.SEARCH_HISTORY] ?: "")
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    }
+
+    /** 记一条搜索历史：去重（忽略大小写）、最近在前、最多 12 条。 */
+    suspend fun addSearchHistory(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val old = (prefs[UiPrefsKeys.SEARCH_HISTORY] ?: "")
+                .split('\n')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            val next = (listOf(q) + old.filter { !it.equals(q, ignoreCase = true) }).take(12)
+            prefs[UiPrefsKeys.SEARCH_HISTORY] = next.joinToString("\n")
+        }
+    }
+
+    suspend fun clearSearchHistory() {
+        context.dataStore.edit { it.remove(UiPrefsKeys.SEARCH_HISTORY) }
+    }
+
+    /** 备份恢复用：整份写回搜索历史。 */
+    suspend fun setSearchHistoryList(list: List<String>) {
+        context.dataStore.edit { prefs ->
+            val cleaned = list.map { it.trim() }.filter { it.isNotEmpty() }.take(12)
+            if (cleaned.isEmpty()) prefs.remove(UiPrefsKeys.SEARCH_HISTORY)
+            else prefs[UiPrefsKeys.SEARCH_HISTORY] = cleaned.joinToString("\n")
+        }
+    }
+
+    /**
+     * 备份恢复（A3）：整份写回 UiPrefs。
+     *
+     * **故意不写 TV 密码相关字段**（tvPinEnabled / tvPinHash / tvPinLength / tvPinLockUntil）：
+     * 把别人的密码哈希带到这台机器上，只会造成「开着锁但不知道密码」。
+     */
+    suspend fun applyUiPrefs(p: UiPrefs) {
+        context.dataStore.edit { prefs ->
+            prefs[UiPrefsKeys.INITIAL_TAB] = p.initialTab
+            prefs[UiPrefsKeys.JAV_SORT] = p.javSort
+            prefs[UiPrefsKeys.VIDEO_SORT] = p.videoSort
+            prefs[UiPrefsKeys.TITLE_ROWS] = p.titleRows
+            prefs[UiPrefsKeys.TAG_ROWS] = p.tagRows
+            prefs[UiPrefsKeys.HIDE_TAGS] = p.hideTags
+            prefs[UiPrefsKeys.HIDE_IDOLS] = p.hideIdols
+            prefs[UiPrefsKeys.HIDE_STUDIO] = p.hideStudio
+            prefs[UiPrefsKeys.HIDE_SERIES] = p.hideSeries
+            prefs[UiPrefsKeys.TAG_SIMPLIFIED] = p.tagSimplified
+            prefs[UiPrefsKeys.IDOL_PREFER_CHINESE] = p.idolPreferChinese
+            prefs[Keys.PLAYER_PREFER_DIRECT] = p.preferDirect
+            prefs[Keys.PLAYER_RESUME] = p.resumePlayback
+            prefs[Keys.AUTO_UPLOAD_SCREENSHOTS] = p.autoUploadScreenshots
+            prefs[UiPrefsKeys.PLAYBACK_SPEED] = p.playbackSpeed.toString()
+            prefs[UiPrefsKeys.AUTO_PIP] = p.autoPictureInPicture
+            prefs[UiPrefsKeys.APP_LOCK] = p.appLockEnabled
+            prefs[UiPrefsKeys.PRIVACY_MODE] = p.privacyMode
+            prefs[UiPrefsKeys.UI_MODE] = p.uiMode
+            prefs[UiPrefsKeys.COVER_STYLE] = p.coverStyle
+            prefs[UiPrefsKeys.TV_COLUMNS] = p.tvColumns.toString()
+            prefs[UiPrefsKeys.TV_IDLE_LOCK_MIN] = p.tvIdleLockMinutes
+            prefs[UiPrefsKeys.SUBTITLE_FOLDER] = p.subtitleFolder
+            prefs[UiPrefsKeys.SUBTITLE_CAT_BASE] = p.subtitleCatBase
+            prefs[UiPrefsKeys.SUBTITLE_PROXY] = p.subtitleProxy
+            prefs[UiPrefsKeys.SUBTITLE_PROXY_HOST] = p.subtitleProxyHost
+            prefs[UiPrefsKeys.SUBTITLE_PROXY_PORT] = p.subtitleProxyPort
+            prefs[UiPrefsKeys.SUBTITLE_PROXY_HTTPS] = p.subtitleProxyHttps
+            prefs[UiPrefsKeys.NET_PROXY_HOST] = p.netProxyHost
+            prefs[UiPrefsKeys.NET_PROXY_PORT] = p.netProxyPort
+            prefs[UiPrefsKeys.NET_PROXY_TYPE] = p.netProxyType
+            prefs[UiPrefsKeys.SUBTITLE_CHINESE_ONLY] = p.subtitleChineseOnly
+            prefs[UiPrefsKeys.SUBTITLE_LANG_ORDER] = p.subtitleLangOrder
+            prefs[UiPrefsKeys.AUTO_CHECK_UPDATE] = p.autoCheckUpdate
+            prefs[UiPrefsKeys.UPDATE_MIRROR] =
+                com.javboss.android.core.update.UpdateSecurity.sanitizeMirror(p.updateMirror)
+            prefs[UiPrefsKeys.UPDATE_MIRROR_LAST_TEST] = p.updateMirrorLastTest
+            prefs[UiPrefsKeys.PLAYER_SURFACE_VIEW] = p.playerSurfaceView
+        }
+    }
+
+    /** 设置里 TV 密码锁状态（备份时置空，避免把别人机器的锁带过来）。 */
+    suspend fun uiPrefsForBackup(): UiPrefs = uiPrefs.first().copy(
+        tvPinEnabled = false,
+        tvPinHash = "",
+        tvPinLength = 0,
+        tvPinLockUntil = 0L,
+    )
 
     /** 上次列表的筛选/搜索快照（JSON），用于「下次打开回到原处」。 */
     val javQuerySnapshot: Flow<String?> = context.dataStore.data.map { it[UiPrefsKeys.JAV_QUERY_SNAPSHOT] }

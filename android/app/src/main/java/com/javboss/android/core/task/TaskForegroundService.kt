@@ -22,6 +22,7 @@ object TaskForegroundService {
 
     private var enabled = true
 
+    @android.annotation.SuppressLint("MissingPermission")
     fun start(context: Context, title: String, text: String) {
         val ctx = context.applicationContext
         enabled = true

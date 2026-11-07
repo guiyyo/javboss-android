@@ -108,6 +108,7 @@ fun AppRoot() {
 @Composable
 private fun AppRootContent() {
     val locked by AppGraph.lock.locked.collectAsState()
+    val appRootScope = androidx.compose.runtime.rememberCoroutineScope()
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
     LaunchedEffect(Unit) {
@@ -116,7 +117,7 @@ private fun AppRootContent() {
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
-                kotlinx.coroutines.MainScope().launch { AppGraph.lock.onForeground() }
+                appRootScope.launch { AppGraph.lock.onForeground() }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

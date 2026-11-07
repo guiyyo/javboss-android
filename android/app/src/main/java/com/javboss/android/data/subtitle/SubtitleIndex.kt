@@ -166,19 +166,28 @@ object SubtitleIndex {
 
     /** 字幕被移除 / 片源删除 */
     suspend fun remove(code: String) {
-        val key = code.uppercase()
-        _states.value = _states.value - key
-        scheduleFlush()
+        val key = code.trim().uppercase()
+        mutex.withLock {
+            _states.value = _states.value - key
+            scheduleFlush()
+        }
     }
 
+    /**
+     * 安全/并发审计 B：所有写路径都必须在同一把锁里完成读-改-写。
+     * 以前 mutex 只在 init 用过，mutate/remove/importJson 全是非原子的 `_states.value = ...`，
+     * 补齐任务 + 用户手动标记 + 备份导入并发时会互相覆盖（丢状态）。
+     */
     private suspend fun mutate(code: String, block: (SubtitleState) -> SubtitleState) {
         val key = code.trim().uppercase()
         if (key.isBlank()) return
-        val cur = _states.value[key] ?: SubtitleState(code = key)
-        val next = block(cur)
-        if (next == cur) return
-        _states.value = _states.value + (key to next)
-        scheduleFlush()
+        mutex.withLock {
+            val cur = _states.value[key] ?: SubtitleState(code = key)
+            val next = block(cur)
+            if (next == cur) return
+            _states.value = _states.value + (key to next)
+            scheduleFlush()
+        }
     }
 
     private fun scheduleFlush() {
@@ -203,8 +212,13 @@ object SubtitleIndex {
                         IndexFile(version = 2, states = snapshot),
                     ),
                 )
-                if (file.exists()) file.delete()
-                tmp.renameTo(file)
+                // 直接改名覆盖，**不要**先 delete：删完到改名之间进程被杀 = 整份索引丢失。
+                // rename(2) 在同一分区上是原子替换，旧文件要么在、要么被新文件顶掉。
+                if (!tmp.renameTo(file)) {
+                    // 极少数机型 rename 覆盖失败，退回「删了再改名」，并记一条日志
+                    runCatching { file.delete() }
+                    tmp.renameTo(file)
+                }
             }
         }
     }
@@ -233,20 +247,29 @@ object SubtitleIndex {
     }
 
     /** 全库口径统计：已配 / 无字幕 / 无需字幕 */
-    fun counts(): Triple<Int, Int, Int> {
-        var online = 0; var noSub = 0; var noNeed = 0
-        for (v in _states.value.values) {
+    fun counts(): Triple<Int, Int, Int> = countStates(_states.value)
+
+    /**
+     * 纯函数版统计（便于单测）。
+     *
+     * 「已配」必须用 [SubtitleState.hasSubtitle] 判定，也就是**含 LOCAL_FOLDER / EMBEDDED**，
+     * 与列表角标（badge()）和筛选（SubtitleFilter.HAS）保持同一口径。
+     * 以前这里只数 source == ONLINE，导致「已匹配 N 部」比实际筛出来的少（本地文件夹/手动标记内嵌都不计）。
+     */
+    fun countStates(states: Map<String, SubtitleState>): Triple<Int, Int, Int> {
+        var configured = 0; var noSub = 0; var noNeed = 0
+        for (v in states.values) {
             when {
                 v.noNeedSubtitle -> noNeed++
                 v.noSubtitle -> noSub++
-                v.source == SubtitleSource.ONLINE -> online++
+                v.hasSubtitle -> configured++
             }
         }
-        return Triple(online, noSub, noNeed)
+        return Triple(configured, noSub, noNeed)
     }
 
     /** 清掉所有 EMBEDDED 判定（迁移/手动清理用） */
-    suspend fun purgeEmbedded(): Int {
+    suspend fun purgeEmbedded(): Int = mutex.withLock {
         val before = _states.value
         val after = before.filterValues { it.source != SubtitleSource.EMBEDDED }
         val removed = before.size - after.size
@@ -254,7 +277,7 @@ object SubtitleIndex {
             _states.value = after
             flushNow()
         }
-        return removed
+        removed
     }
 
     /** 导出索引 JSON（用于在其它设备导入，避免每台都全库扫描） */
@@ -272,17 +295,19 @@ object SubtitleIndex {
             json.decodeFromString(IndexFile.serializer(), text).states
         }.getOrDefault(emptyMap())
         if (incoming.isEmpty()) return 0
-        val merged = _states.value.toMutableMap()
-        var changed = 0
-        for ((code, st) in incoming) {
-            val cur = merged[code]
-            if (cur == null || st.updatedAt >= cur.updatedAt) {
-                merged[code] = st
-                changed++
+        return mutex.withLock {
+            val merged = _states.value.toMutableMap()
+            var changed = 0
+            for ((code, st) in incoming) {
+                val cur = merged[code]
+                if (cur == null || st.updatedAt >= cur.updatedAt) {
+                    merged[code] = st
+                    changed++
+                }
             }
+            _states.value = merged
+            flushNow()
+            changed
         }
-        _states.value = merged
-        flushNow()
-        return changed
     }
 }

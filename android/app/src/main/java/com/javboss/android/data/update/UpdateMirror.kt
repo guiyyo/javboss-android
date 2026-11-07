@@ -30,8 +30,13 @@ object UpdateMirror {
         "https://ghproxy.cfd/" to "ghproxy.cfd",
     )
 
+    /** 该镜像是否可用（A-L4：只允许 https + 必须含主机名，http/裸域名一律视为直连）。 */
+    fun isUsable(mirror: String): Boolean =
+        com.javboss.android.core.update.UpdateSecurity.sanitizeMirror(mirror).isNotEmpty()
+
     fun wrap(url: String, mirror: String): String {
-        val m = mirror.trim()
+        // 非法前缀（http / 裸域名 / localhost）直接当直连，避免更新包走明文或被引到任意主机
+        val m = com.javboss.android.core.update.UpdateSecurity.sanitizeMirror(mirror)
         if (m.isEmpty()) return url
         if (url.isBlank()) return url
         // 已经是镜像化地址就不重复套

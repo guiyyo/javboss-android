@@ -60,6 +60,7 @@ import kotlinx.coroutines.delay
  *  - 返回键：退出
  */
 @OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
 fun TvPlayerScreen(
     videoId: Long,
@@ -219,7 +220,7 @@ fun TvPlayerScreen(
                     panelOpen = !panelOpen
                     // 打开面板时若还没加载字幕，尝试从缓存/已下载里套用一次
                     if (panelOpen && subCues.isEmpty() && subCode.isNotBlank()) {
-                        kotlinx.coroutines.MainScope().launch {
+                        seekScope.launch {
                             val inst = runCatching {
                                 com.javboss.android.di.AppGraph.subtitle.current(subCode)
                             }.getOrNull() ?: return@launch
@@ -270,8 +271,16 @@ fun TvPlayerScreen(
                         true
                     }
                     Key.DirectionLeft, Key.DirectionRight -> {
-                        val step = if (event.key == Key.DirectionLeft) -10_000L else 10_000L
+                        // 长按加速（E3）：按住不放时步长 10s → 30s → 60s
+                        val repeat = event.nativeKeyEvent.repeatCount
+                        val magnitude = when {
+                            repeat <= 0 -> 10_000L
+                            repeat <= 4 -> 30_000L
+                            else -> 60_000L
+                        }
+                        val step = if (event.key == Key.DirectionLeft) -magnitude else magnitude
                         pendingSeekMs += step
+                        if (repeat > 0) hint = (if (step > 0) "快进 " else "快退 ") + (magnitude / 1000) + "s"
                         seekOsdTarget = (positionMs + pendingSeekMs).coerceIn(0, if (durationMs > 0) durationMs else Long.MAX_VALUE)
                         seekOsdVisible = true
                         overlayVisible = true
@@ -380,7 +389,7 @@ fun TvPlayerScreen(
                     val code = subCode
                     val name = subName
                     if (code.isNotBlank() && name != null) {
-                        kotlinx.coroutines.MainScope().launch {
+                        seekScope.launch {
                             runCatching {
                                 com.javboss.android.di.AppGraph.settings.setSubtitleSelection(code, name, subOffset)
                             }
@@ -392,7 +401,7 @@ fun TvPlayerScreen(
                     val name = subName
                     subOffset = 0L
                     if (code.isNotBlank() && name != null) {
-                        kotlinx.coroutines.MainScope().launch {
+                        seekScope.launch {
                             runCatching {
                                 com.javboss.android.di.AppGraph.settings.setSubtitleSelection(code, name, 0L)
                             }
@@ -403,14 +412,14 @@ fun TvPlayerScreen(
                     subCues = emptyList()
                     subName = null
                     subOffset = 0L
-                    kotlinx.coroutines.MainScope().launch {
+                    seekScope.launch {
                         runCatching { com.javboss.android.di.AppGraph.subtitle.clear(subCode) }
                     }
                 },
                 onToggleSkip = { skip ->
                     subSkipped = skip
                     if (skip) { subCues = emptyList(); subName = null }
-                    kotlinx.coroutines.MainScope().launch {
+                    seekScope.launch {
                         runCatching { com.javboss.android.di.AppGraph.settings.setSubtitleSkipped(subCode, skip) }
                     }
                 },
@@ -609,7 +618,7 @@ fun TvPlayerScreen(
 private fun fmt(ms: Long): String {
     if (ms <= 0) return "00:00"
     val s = ms / 1000
-    return String.format("%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+    return String.format(java.util.Locale.US, "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
 }
 @Composable
 private fun ResumeOption(label: String, selected: Boolean, onClick: () -> Unit) {

@@ -46,8 +46,7 @@ class SettingsViewModel : ViewModel() {
         if (loggingOut) return
         loggingOut = true
         viewModelScope.launch {
-            AppGraph.auth.logout()
-            AppGraph.cookieStore.clear()
+            AppGraph.auth.logout()   // 内部会调 logoutLocally()：清 Cookie + 会话 + 日志
             loggingOut = false
             onDone()
         }

@@ -86,6 +86,40 @@ fun SettingsScreen(
     var subtitleProxyPortInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("8899") }
     var subtitleProxyHttps by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var indexMsg by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+
+    /* ---------------- 备份与恢复（A3） ---------------- */
+    var backupMsg by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var pendingBackup by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var backupConfirmOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    val exportBackup = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val text = com.javboss.android.di.AppGraph.backup.exportJson()
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(text.toByteArray())
+                    }
+                    backupMsg = "已导出备份（" + text.length + " 字节）"
+                }.onFailure { backupMsg = "导出失败：" + it.message }
+            }
+        }
+    }
+    val importBackup = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        ?: error("无法读取文件")
+                    pendingBackup = text
+                    backupConfirmOpen = true
+                }.onFailure { backupMsg = "读取失败：" + it.message }
+            }
+        }
+    }
     val exportSubtitlesZip = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri ->
@@ -149,6 +183,7 @@ fun SettingsScreen(
     var updateInfo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.javboss.android.data.update.UpdateChecker.UpdateInfo?>(null) }
     var mirrorDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var mirrorInput by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var mirrorNotice by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     var testingMirror by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var mirrorEditing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var autoApplied by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -186,7 +221,7 @@ fun SettingsScreen(
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            SectionCard("连接") {
+            SectionCard("连接", "服务端地址与访问密钥；通不了先看这里") {
                 OutlinedTextField(
                     value = vm.serverUrl,
                     onValueChange = vm::onServerUrlInput,
@@ -204,7 +239,7 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard("浏览（仅本机）") {
+            SectionCard("浏览（仅本机）", "默认页面、排序、每页数量等浏览习惯") {
                 Text(
                     "以下设置只影响 App，不会改动网页端配置；列表统一瀑布流加载，不分页。",
                     style = MaterialTheme.typography.labelSmall,
@@ -235,7 +270,7 @@ fun SettingsScreen(
                 )
             }
 
-            SectionCard("界面模式（仅本机）") {
+            SectionCard("界面模式（仅本机）", "手机 / 平板 / 电视三套布局，只影响本机") {
                 NavRow(
                     "当前模式",
                     when (prefs.uiMode) {
@@ -622,7 +657,7 @@ fun SettingsScreen(
                 )
             }
 
-            SectionCard("卡片显示（仅本机）") {
+            SectionCard("卡片显示（仅本机）", "封面横竖、标题行数、是否显示标签/女优/片商") {
                 val config by com.javboss.android.di.AppGraph.config.config.collectAsState()
                 val webPortrait = (config["jav_card_portrait"] ?: "").let { it == "true" || it == "1" }
                 NavRow(
@@ -678,7 +713,7 @@ fun SettingsScreen(
             }
 
             // 字幕
-            SectionCard("字幕（仅本机）") {
+            SectionCard("字幕（仅本机）", "搜索源、代理、语言偏好、批量补齐、导出/分享") {
                 val folderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
                 ) { uri ->
@@ -717,8 +752,34 @@ fun SettingsScreen(
                 NavRow("导出已匹配字幕", "打包为 ZIP，条目名 = 番号.语言.srt") {
                     exportSubtitlesZip.launch("javboss-subtitles.zip")
                 }
+                NavRow("分享已匹配字幕", "打包 ZIP 后直接调起分享（微信/QQ/邮件等）") {
+                    scope.launch {
+                        runCatching {
+                            val r = com.javboss.android.data.subtitle.SubtitleExporter.exportZip(context)
+                            val dst = java.io.File(
+                                com.javboss.android.core.share.FileSharing.exportDir(context),
+                                "javboss-subtitles.zip",
+                            )
+                            r.zip.copyTo(dst, overwrite = true)
+                            val ok = com.javboss.android.core.share.FileSharing.share(
+                                context, dst, "application/zip", "JavBoss 已匹配字幕（" + r.count + " 条）",
+                            )
+                            indexMsg = if (ok) "已准备 " + r.count + " 条字幕，请选择分享目标" else "分享失败：没有可用的分享应用"
+                        }.onFailure { indexMsg = "分享失败：" + it.message }
+                    }
+                }
                 NavRow("导出字幕索引", "把本机扫描结果导出为 JSON，供其它设备导入") {
                     exportIndex.launch("subtitles-index.json")
+                }
+                NavRow("分享字幕索引", "导出 JSON 后直接调起分享（换设备时最省事）") {
+                    val ok = com.javboss.android.core.share.FileSharing.shareText(
+                        context,
+                        "subtitles-index.json",
+                        com.javboss.android.data.subtitle.SubtitleIndex.exportJson(),
+                        "application/json",
+                        "JavBoss 字幕索引",
+                    )
+                    indexMsg = if (ok) "已准备字幕索引，请选择分享目标" else "分享失败：没有可用的分享应用"
                 }
                 NavRow("导入字幕索引", "从其它设备导出的 JSON 合并进来（同番号取较新）") {
                     importIndex.launch(arrayOf("application/json", "text/plain", "*/*"))
@@ -769,7 +830,7 @@ fun SettingsScreen(
                 )
             }
 
-            SectionCard("隐私与锁") {
+            SectionCard("隐私与锁", "禁止截屏、应用锁（指纹/系统密码）") {
                 SwitchRow(
                     "指纹锁",
                     if (biometricAvailable) "冷启动与设备锁屏后重新进入需要解锁" else "当前设备未设置指纹/锁屏密码",
@@ -803,8 +864,8 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard("播放器（仅本机）") {
-                SwitchRow("优先直连播放", "直连可任意拖动；不支持时自动回落 HLS", prefs.preferDirect) {
+            SectionCard("播放器（仅本机）", "直连优先、续播、渲染方式") {
+                SwitchRow("优先直连播放", "先试原文件直连（即使服务端建议 HLS）；失败自动切到另一路", prefs.preferDirect) {
                     scope.launch { AppGraph.settings.setPreferDirect(it) }
                 }
                 StepperSpeedRow(prefs.playbackSpeed) { speed ->
@@ -821,7 +882,7 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard("服务器管理（会修改服务器）") {
+            SectionCard("服务器管理（会修改服务器）", "目录 / 下载 / 资源 / 数据源，改动会写到服务端") {
                 NavRow("目录管理", "启用开关、扫描、统计", onOpenDirectories)
                 NavRow("服务器配置", "与 /config 对照（只读）", onOpenServerConfig)
                 NavRow("下载中心", "任务列表、重试/取消/删除、新建磁力", onOpenDownloads)
@@ -834,7 +895,7 @@ fun SettingsScreen(
             }
 
 
-            SectionCard("关于 / 更新") {
+            SectionCard("关于 / 更新", "版本、检查更新、下载镜像、诊断日志") {
                 NavRow("当前版本", "v${com.javboss.android.BuildConfig.VERSION_NAME}（${com.javboss.android.BuildConfig.VERSION_CODE}）") {}
                 NavRow(
                     "检查更新",
@@ -871,6 +932,10 @@ fun SettingsScreen(
                         checkingUpdate = false
                     }
                 }
+                NavRow("诊断日志", "崩溃与运行日志（已脱敏），可分享或复制为 Issue 模板") {
+                    crashText = com.javboss.android.core.log.Diagnostics.buildReport(context)
+                    crashLogOpen = true
+                }
                 NavRow(
                     "下载镜像",
                     com.javboss.android.data.update.UpdateMirror.label(prefs.updateMirror),
@@ -894,7 +959,36 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard("账号") {
+            SectionCard("备份与恢复", "把设置/进度/字幕状态打包或分享，换机用") {
+                NavRow("导出备份", "设置 + 观看进度 + 字幕索引/选择 + 搜索历史，一个 JSON 文件") {
+                    backupMsg = null
+                    exportBackup.launch("javboss-backup.json")
+                }
+                NavRow("分享备份", "生成 JSON 后直接调起分享（比另存为更顺手）") {
+                    scope.launch {
+                        runCatching {
+                            val text = com.javboss.android.di.AppGraph.backup.exportJson()
+                            val ok = com.javboss.android.core.share.FileSharing.shareText(
+                                context, "javboss-backup.json", text, "application/json", "JavBoss 备份",
+                            )
+                            backupMsg = if (ok) "已准备备份，请选择分享目标" else "分享失败：没有可用的分享应用"
+                        }.onFailure { backupMsg = "生成备份失败：" + it.message }
+                    }
+                }
+                NavRow("从备份恢复", "设置按备份覆盖；观看记录 / 字幕索引取较新") {
+                    backupMsg = null
+                    importBackup.launch(arrayOf("application/json", "text/plain", "*/*"))
+                }
+                backupMsg?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            SectionCard("账号", "修改访问密码、扩展令牌、退出登录") {
                 NavRow("账号与安全", "修改访问密码、查看扩展令牌", onOpenAccount)
             }
 
@@ -912,13 +1006,6 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             ) { Text(if (vm.loggingOut) "退出中…" else "退出登录") }
 
-            TextButton(
-                onClick = {
-                    crashText = com.javboss.android.core.log.Diagnostics.buildReport(context)
-                    crashLogOpen = true
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("诊断日志") }
 
             Text(
                 "JavBoss Android v${com.javboss.android.BuildConfig.VERSION_NAME} · Client 模式 · App 设置与网页端互不影响",
@@ -927,6 +1014,44 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
         }
+    }
+
+    val backupText = pendingBackup
+    if (backupConfirmOpen && backupText != null) {
+        val bkDesc = androidx.compose.runtime.remember(backupText) {
+            runCatching { com.javboss.android.di.AppGraph.backup.describe(backupText) }
+                .getOrElse { "无法解析备份文件：" + it.message }
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { backupConfirmOpen = false },
+            title = { Text("从备份恢复？") },
+            text = { Text(bkDesc, style = MaterialTheme.typography.bodySmall) },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = {
+                        backupConfirmOpen = false
+                        scope.launch {
+                            runCatching {
+                                val r = com.javboss.android.di.AppGraph.backup.importJson(backupText, applySettings = false)
+                                backupMsg = r.summary() + "（设置未改动）"
+                            }.onFailure { backupMsg = "恢复失败：" + it.message }
+                        }
+                    }) { Text("仅恢复数据") }
+                    TextButton(onClick = {
+                        backupConfirmOpen = false
+                        scope.launch {
+                            runCatching {
+                                val r = com.javboss.android.di.AppGraph.backup.importJson(backupText, applySettings = true)
+                                backupMsg = r.summary()
+                            }.onFailure { backupMsg = "恢复失败：" + it.message }
+                        }
+                    }) { Text("全部恢复") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { backupConfirmOpen = false }) { Text("取消") }
+            },
+        )
     }
 
     updateInfo?.let { info ->
@@ -1080,6 +1205,14 @@ fun SettingsScreen(
                                 .focusRequester(focusRequester),
                         )
                     }
+                    mirrorNotice?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
                     if (testError != null) {
                         Text(
                             testError!!,
@@ -1115,7 +1248,18 @@ fun SettingsScreen(
                     // 只有填了自定义前缀才覆盖；否则保留测速自动选中的镜像
                     val custom = mirrorInput.trim()
                     if (custom.isNotBlank()) {
-                        scope.launch { AppGraph.settings.setUpdateMirror(custom) }
+                        val safe = com.javboss.android.core.update.UpdateSecurity.sanitizeMirror(custom)
+                        if (safe.isEmpty()) {
+                            mirrorNotice = "格式不对：需要 主机[:端口]（如 ghfast.top/ 或 http://192.168.1.1:8899/），已忽略本次输入"
+                            return@TextButton
+                        }
+                        // https 不强制：http 也照存，只提示一句明文风险
+                        mirrorNotice = if (safe.startsWith("http://", ignoreCase = true)) {
+                            "已保存 http 前缀：更新包将走明文传输，请自行判断是否可接受"
+                        } else {
+                            null
+                        }
+                        scope.launch { AppGraph.settings.setUpdateMirror(safe) }
                     }
                     mirrorDialog = false
                 }) { Text("保存") }
@@ -1129,7 +1273,12 @@ fun SettingsScreen(
         androidx.compose.ui.window.Dialog(onDismissRequest = { crashLogOpen = false }) {
             androidx.compose.material3.Card {
                 androidx.compose.foundation.layout.Column(Modifier.padding(16.dp)) {
-                    Text("崩溃日志", style = MaterialTheme.typography.titleSmall)
+                    Text("诊断日志（已脱敏）", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "IP / 端口 / Cookie / 用户名 / 邮箱已自动替换，错误码与堆栈保留。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Text(
                         text = crashText,
                         style = MaterialTheme.typography.labelSmall,
@@ -1139,6 +1288,7 @@ fun SettingsScreen(
                             .verticalScroll(androidx.compose.foundation.rememberScrollState())
                             .padding(top = 8.dp),
                     )
+                    // 手机上这一行放不下 4 个按钮（「关闭」会被挤出屏幕），拆成两行
                     androidx.compose.foundation.layout.Row(
                         Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.End,
@@ -1149,7 +1299,24 @@ fun SettingsScreen(
                                     com.javboss.android.core.log.Diagnostics.shareFile(context, crashText)
                                 }
                             }
-                        }) { Text("分享到 QQ / 微信") }
+                        }) { Text("分享") }
+                        TextButton(onClick = {
+                            runCatching {
+                                val clip = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                                clip.setPrimaryClip(
+                                    android.content.ClipData.newPlainText(
+                                        "JavBoss 诊断",
+                                        com.javboss.android.core.log.Diagnostics.buildIssueTemplate(context),
+                                    ),
+                                )
+                            }
+                        }) { Text("复制为 Issue 模板", maxLines = 1, softWrap = false) }
+                    }
+                    androidx.compose.foundation.layout.Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
                         TextButton(onClick = {
                             com.javboss.android.core.log.CrashLogger.clear(context)
                             crashLogOpen = false
@@ -1164,14 +1331,26 @@ fun SettingsScreen(
 /* ------------------------------------------------------------------ 组件 */
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
+private fun SectionCard(
+    title: String,
+    subtitle: String? = null,
+    content: @Composable () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 6.dp),
-        )
+        Column(Modifier.padding(start = 6.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            subtitle?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+        }
         AppCard(modifier = Modifier.fillMaxWidth()) {
             Column(
                 Modifier.padding(horizontal = 16.dp, vertical = 13.dp),

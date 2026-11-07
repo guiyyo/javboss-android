@@ -28,7 +28,6 @@ import androidx.compose.ui.unit.dp
 import com.javboss.android.data.subtitle.SubtitleFill
 import com.javboss.android.di.AppGraph
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 
 /**
@@ -41,6 +40,7 @@ fun TvReviewDialog(onDismiss: () -> Unit) {
     var candidateCode by remember { mutableStateOf<String?>(null) }
     var candidates by remember { mutableStateOf<List<com.javboss.android.data.subtitle.SubtitleCandidate>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
+    val reviewScope = androidx.compose.runtime.rememberCoroutineScope()
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -74,7 +74,7 @@ fun TvReviewDialog(onDismiss: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TvFocusable(
                         onClick = {
-                            GlobalScope.launch(Dispatchers.IO) {
+                            reviewScope.launch(Dispatchers.IO) {
                                 SubtitleFill.markAllManualNoSubtitle(context)
                             }
                         },
@@ -97,7 +97,7 @@ fun TvReviewDialog(onDismiss: () -> Unit) {
                                     candidateCode = code
                                     loading = true
                                     candidates = emptyList()
-                                    GlobalScope.launch(Dispatchers.IO) {
+                                    reviewScope.launch(Dispatchers.IO) {
                                         val r = AppGraph.subtitle.searchOnline(code)
                                         candidates = r.getOrNull().orEmpty()
                                         loading = false
@@ -110,7 +110,7 @@ fun TvReviewDialog(onDismiss: () -> Unit) {
                             }
                             TvFocusable(
                                 onClick = {
-                                    GlobalScope.launch(Dispatchers.IO) { SubtitleFill.markNoNeed(code) }
+                                    reviewScope.launch(Dispatchers.IO) { SubtitleFill.markNoNeed(code) }
                                 },
                                 shape = RoundedCornerShape(6.dp),
                                 flat = true,
@@ -188,7 +188,7 @@ fun TvReviewDialog(onDismiss: () -> Unit) {
                                 }
                                 TvFocusable(
                                     onClick = {
-                                        GlobalScope.launch(Dispatchers.IO) {
+                                        reviewScope.launch(Dispatchers.IO) {
                                             AppGraph.subtitle.install(code, cand).onSuccess {
                                                 com.javboss.android.data.subtitle.SubtitleIndex.markOnline(code)
                                                 SubtitleFill.removeManual(code)

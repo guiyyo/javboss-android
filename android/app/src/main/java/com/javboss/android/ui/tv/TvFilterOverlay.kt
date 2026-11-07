@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,18 @@ fun TvFilterOverlay(
     var favoriteGroups by remember { mutableStateOf<List<com.javboss.android.data.model.FavoriteGroup>>(emptyList()) }
     val idolIds = remember { mutableStateListOf<Long>().apply { addAll(initial.idolIds) } }
     val tagIds = remember { mutableStateListOf<Long>().apply { addAll(initial.tagIds) } }
+
+    // 遥控器 BACK 只关浮层：否则会一路传到底层 BackHandler/系统，直接把应用退到桌面
+    androidx.activity.compose.BackHandler(enabled = true) { onDismiss() }
+
+    // 打开浮层后必须把焦点送进来，否则遥控器「点开后没反应」
+    val firstItemFocus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) {
+        repeat(10) {
+            kotlinx.coroutines.delay(80)
+            if (runCatching { firstItemFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
 
     LaunchedEffect(Unit) {
         when (val r = AppGraph.jav.filterOptions()) {
@@ -186,6 +199,9 @@ fun TvFilterOverlay(
                                 onClick = { page = entry; search = "" },
                                 shape = RoundedCornerShape(6.dp),
                                 flat = true,
+                                modifier = if (entry == TvFilterPage.entries.first()) {
+                                    Modifier.focusRequester(firstItemFocus)
+                                } else Modifier,
                             ) {
                                 Row(
                                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),

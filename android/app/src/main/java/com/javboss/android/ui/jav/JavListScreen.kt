@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -85,10 +87,14 @@ import com.javboss.android.di.AppGraph
 import com.javboss.android.ui.common.ScrollToTopButton
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Casino
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun JavListScreen(
     onOpenItem: (Long) -> Unit,
@@ -112,6 +118,7 @@ fun JavListScreen(
         if (searchExpanded) runCatching { searchFocus.requestFocus() }
     }
     var sortMenuOpen by remember { mutableStateOf(false) }
+    var moreMenuOpen by remember { mutableStateOf(false) }
     var filterOpen by remember { mutableStateOf(false) }
     var groupPickerOpen by remember { mutableStateOf(false) }
     var tagPickerOpen by remember { mutableStateOf(false) }
@@ -122,6 +129,12 @@ fun JavListScreen(
     val navFiltered = initialStudioId != null || initialSeriesId != null ||
         initialIdolIds.isNotEmpty() || initialPrefix != null || initialTagIds.isNotEmpty()
     val spec = com.javboss.android.ui.common.rememberLayoutSpec()
+    // 当前网格列数（网格与「随机」共用）：随机视图按「4 行」取数
+    val gridColumns = when {
+        prefs.tvColumns > 0 -> prefs.tvColumns
+        prefs.coverStyle == "portrait" -> 4
+        else -> spec.javColumns
+    }
     val scrollScope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(initialStudioId, initialSeriesId, initialIdolIds, initialPrefix, initialTagIds) {
@@ -162,7 +175,7 @@ fun JavListScreen(
                 OutlinedTextField(
                     value = searchText,
                     onValueChange = { searchText = it },
-                    placeholder = { Text("搜索番号 / 标题 / 女优") },
+                    placeholder = { Text("搜索番号 / 标题 / 女优", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     trailingIcon = {
@@ -189,45 +202,93 @@ fun JavListScreen(
                     Icon(Icons.Filled.Search, contentDescription = "搜索")
                 }
             }
-            if (!searchExpanded) {
-            IconButton(onClick = onOpenHistory) {
-                Icon(Icons.Filled.History, contentDescription = "观看记录")
-            }
-            IconButton(onClick = { filterOpen = true }) {
-                Icon(Icons.Filled.FilterList, contentDescription = "筛选")
-            }
-            IconButton(onClick = onOpenPrefixes) {
-                Icon(Icons.Filled.MenuBook, contentDescription = "番号字典")
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Filled.Settings, contentDescription = "设置")
-            }
-            Box {
-                IconButton(onClick = { sortMenuOpen = true }) {
-                    Icon(Icons.Filled.Sort, contentDescription = "排序")
+            if (!searchExpanded || spec.isLarge) {
+                // 顶部工具条（产品化重排）：动作都带文字标签，按「常用→低频」从左到右；
+                // 低频项收进「更多」菜单，避免一排图标看不出是什么。
+                // 只有当搜索框收起（手机未展开）时才用 Spacer 把动作推到右边；
+                // 大屏搜索框常驻时，让搜索框吃掉剩余宽度（之前两者各 weight(1f) 平分，导致输入框过窄、占位文字换行）
+                if (!inlineSearch) androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                ToolAction("筛选", Icons.Filled.FilterList, active = vm.query.hasFilter()) { filterOpen = true }
+                Box {
+                    ToolAction("排序", Icons.Filled.Sort) { sortMenuOpen = true }
+                    DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                        JavSortOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = option.label,
+                                        color = if (option.value == vm.query.sort) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        },
+                                    )
+                                },
+                                onClick = {
+                                    sortMenuOpen = false
+                                    vm.setSort(option.value)
+                                },
+                            )
+                        }
+                    }
                 }
-                DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
-                    JavSortOptions.forEach { option ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = option.label,
-                                    color = if (option.value == vm.query.sort) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    },
-                                )
-                            },
-                            onClick = {
-                                sortMenuOpen = false
-                                vm.setSort(option.value)
-                            },
-                        )
+                ToolAction("随机", Icons.Filled.Casino, active = vm.randomMode) {
+                    // 平板/横屏按「4 行 × 当前列数」铺满（如 3 列 → 12、2 列 → 8）；
+                    // 手机大卡片一行只放得下 1 张，4 行只有 4 个太少，固定给 10 个。
+                    vm.randomTen(if (spec.isLarge) gridColumns * 4 else 10)
+                }
+                Box {
+                    IconButton(onClick = { moreMenuOpen = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                    }
+                    DropdownMenu(expanded = moreMenuOpen, onDismissRequest = { moreMenuOpen = false }) {
+                        DropdownMenuItem(text = { Text("番号字典") }, onClick = {
+                            moreMenuOpen = false
+                            onOpenPrefixes()
+                        })
+                        DropdownMenuItem(text = { Text("观看记录") }, onClick = {
+                            moreMenuOpen = false
+                            onOpenHistory()
+                        })
+                        DropdownMenuItem(text = { Text("设置") }, onClick = {
+                            moreMenuOpen = false
+                            onOpenSettings()
+                        })
                     }
                 }
             }
+        }
+
+        // 搜索历史：只在「搜索框展开 + 还没输入」时出现（F1）
+        if (searchExpanded && searchText.isBlank() && vm.searchHistory.isNotEmpty()) {
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                vm.searchHistory.forEach { h ->
+                    FilterChip(
+                        selected = false,
+                        onClick = {
+                            searchText = h
+                            vm.setSearch(h)
+                        },
+                        label = { Text(h, style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
+                TextButton(onClick = { vm.clearSearchHistory() }) { Text("清空历史") }
             }
+        }
+
+        vm.randomHint?.let { hint ->
+            Text(
+                hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp)
+                    .clickable { vm.dismissRandomHint() },
+            )
         }
 
         if (vm.selectedIds.isNotEmpty()) {
@@ -250,6 +311,24 @@ fun JavListScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
+        }
+
+        // 随机视图提示条：说明当前列表是随机的，可一键返回
+        if (vm.randomMode) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FilterChip(
+                    selected = true,
+                    onClick = { vm.clearRandom() },
+                    label = { Text("随机推荐 " + vm.total + " 部 · 点此返回", style = MaterialTheme.typography.labelSmall) },
+                    trailingIcon = {
+                        Icon(Icons.Filled.Close, contentDescription = "返回", modifier = Modifier.size(16.dp))
+                    },
+                )
+            }
         }
 
         if (vm.favoriteGroups.isNotEmpty() || vm.query.hasFilter()) {
@@ -283,6 +362,7 @@ fun JavListScreen(
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
+
         when {
             vm.loading && vm.items.isEmpty() -> LoadingBox(Modifier.weight(1f))
             vm.error != null && vm.items.isEmpty() -> ErrorBox(vm.error!!, onRetry = vm::refresh, modifier = Modifier.weight(1f))
@@ -292,15 +372,9 @@ fun JavListScreen(
             )
             else -> Box(Modifier.weight(1f)) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(
-                    when {
-                        prefs.tvColumns > 0 -> prefs.tvColumns
-                        prefs.coverStyle == "portrait" -> 4
-                        else -> spec.javColumns
-                    },
-                ),
+                columns = GridCells.Fixed(gridColumns),
                 state = gridState,
-                contentPadding = PaddingValues(12.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),
@@ -558,6 +632,34 @@ fun JavCard(
     }
 }
 
+/** 顶部工具条按钮：图标 + 文字（比纯图标好认，选中态用主色）。 */
+@Composable
+private fun ToolAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            modifier = Modifier.size(18.dp),
+            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(3.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
 /** 首页「继续观看」小卡片：缩略图 + 进度 + 标题。 */
 @Composable
 private fun ContinueWatchingCard(
@@ -581,7 +683,8 @@ private fun ContinueWatchingCard(
     ) {
         Box(Modifier.fillMaxWidth().height(coverHeight)) {
             NetworkImage(
-                url = "${baseUrl.trimEnd('/')}/videos/${video.id}/thumbnail",
+                // 「只要有封面就显示封面」：该视频关联了番号就用作品封面，否则才用视频截图
+                url = com.javboss.android.core.media.CardImageUrl.forVideo(baseUrl, video.jav?.code, video.id),
                 modifier = Modifier.fillMaxSize(),
             )
             // 字幕角标：左上角（右上角是时长），小卡片用 dense 样式

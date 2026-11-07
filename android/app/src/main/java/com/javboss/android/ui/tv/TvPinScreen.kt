@@ -30,7 +30,6 @@ fun TvPinScreen(onUnlocked: () -> Unit) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var fails by remember { mutableStateOf(0) }
     var lockRemainSec by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val targetLen = prefs.tvPinLength.takeIf { it in 4..6 } ?: 6
@@ -43,6 +42,12 @@ fun TvPinScreen(onUnlocked: () -> Unit) {
         }
     }
 
+    // 锁定截止时间存在 DataStore 里：退出重进、甚至重启 App 都不会把冷却清零
+    LaunchedEffect(Unit) {
+        val remain = runCatching { AppGraph.settings.tvPinLockRemainingMs() }.getOrDefault(0L)
+        if (remain > 0) lockRemainSec = ((remain + 999) / 1000).toInt()
+    }
+
     fun submit() {
         if (busy || pin.isBlank() || lockRemainSec > 0) return
         busy = true
@@ -53,13 +58,15 @@ fun TvPinScreen(onUnlocked: () -> Unit) {
                 onUnlocked()
             } else {
                 pin = ""
-                fails += 1
-                if (fails >= 5) {
-                    fails = 0
-                    lockRemainSec = 30
-                    error = "密码错误次数过多，请等待 30 秒"
+                val remain = runCatching { AppGraph.settings.tvPinLockRemainingMs() }.getOrDefault(0L)
+                val failsNow = runCatching { AppGraph.settings.tvPinFailCount() }.getOrDefault(0)
+                if (remain > 0) {
+                    val sec = ((remain + 999) / 1000).toInt().coerceAtLeast(1)
+                    lockRemainSec = sec
+                    error = "密码错误次数过多，请等待 " + sec + " 秒"
                 } else {
-                    error = "密码不对，请重试（还可尝试 ${5 - fails} 次）"
+                    val left = (5 - failsNow % 5).coerceAtLeast(1)
+                    error = "密码不对，请重试（还可尝试 " + left + " 次）"
                 }
             }
         }

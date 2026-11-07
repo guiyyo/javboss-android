@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -146,6 +147,10 @@ fun TvAppRoot() {
             var lastActivity by remember { mutableStateOf(System.currentTimeMillis()) }
             val tvPrefs = prefs
             var pinUnlocked by remember { mutableStateOf(false) }
+            // 「刚设过密码」= 本次会话已经在这台电视前验证过人，直接免锁
+            LaunchedEffect(prefs.tvPinEnabled) {
+                if (!prefs.tvPinEnabled) TvGlobalNav.pinJustSet.value = false
+            }
             // 每次进入（冷启动 / 从后台返回）都要重新解锁
             val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
             androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
@@ -173,7 +178,8 @@ fun TvAppRoot() {
                     }
                 }
             }
-            if (prefs.tvPinEnabled && prefs.tvPinHash.isNotBlank() && !pinUnlocked) {
+            val pinJustSet by TvGlobalNav.pinJustSet.collectAsState()
+            if (prefs.tvPinEnabled && prefs.tvPinHash.isNotBlank() && !pinUnlocked && !pinJustSet) {
                 TvPinScreen(onUnlocked = { pinUnlocked = true; lastActivity = System.currentTimeMillis() })
             } else {
                 Box(Modifier.fillMaxSize().onPreviewKeyEvent {
@@ -299,6 +305,7 @@ private fun TvContent(onLogout: () -> Unit) {
                 } else false
             },
     ) {
+
         // 左侧导航
         Column(
             modifier = Modifier
@@ -553,8 +560,7 @@ private fun TvHomeScreen(
 }
 
 private fun coverOf(baseUrl: String, video: VideoRow): String =
-    if (!video.jav?.code.isNullOrBlank()) "$baseUrl/jav/${video.jav!!.code}/cover"
-    else "$baseUrl/videos/${video.id}/thumbnail"
+    com.javboss.android.core.media.CardImageUrl.forVideo(baseUrl, video.jav?.code, video.id)
 
 class TvHomeViewModel : ViewModel() {
     var continueWatching by mutableStateOf<List<VideoRow>>(emptyList())
@@ -602,7 +608,9 @@ private fun TvJavGridScreen(
     onOpenSettings: () -> Unit = {},
     query: JavQuery,
     onOpenDetail: (Long) -> Unit,
-    vm: TvGridViewModel = viewModel(key = "grid-${query.hashCode()}"),
+    // 注意：key 不能绑 query（随机/排序一改就会换 VM 并重建，遥控器焦点会被清掉）；
+    // 用页面标题做稳定 key，query 变化交给 applyQuery 处理。
+    vm: TvGridViewModel = viewModel(key = "grid-" + title),
 ) {
     val gridState = state
     val requesterFor = rememberTvFocusRestorer()
@@ -633,6 +641,11 @@ private fun TvJavGridScreen(
             .collect { vm.loadMore() }
     }
 
+    // 筛选浮层关闭后把焦点还给「筛选」按钮（在关闭回调里做，见 TvFilterOverlay 调用处）
+    val filterBtnFocus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+
+    // 列数是 @Composable（跟屏幕尺寸/封面样式有关），先算好再给「随机」用
+    val randomFillColumns = tvGridColumns(portrait)
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         TvListHeader(
@@ -645,6 +658,8 @@ private fun TvJavGridScreen(
                 vm.applySearch(it.trim())
             },
             onFilter = { showFilter = true },
+            onRandom = { vm.randomTen(randomFillColumns * 4) },
+            filterFocus = filterBtnFocus,
         )
         // 排序 / 观看状态（与手机端一致的常用组合）
         androidx.compose.foundation.layout.FlowRow(
@@ -741,8 +756,26 @@ private fun TvJavGridScreen(
                 subtitleFilter = subtitleFilter,
                 subtitleStats = listOf(counts.first, counts.second, counts.third),
                 onSubtitleFilter = { subtitleFilter = it },
-                onDismiss = { showFilter = false },
-                onApply = { newQuery -> vm.applyQuery(newQuery) },
+                onDismiss = {
+                    showFilter = false
+                    // 关闭浮层后把焦点还给「筛选」按钮（浮层是独立焦点区域，关掉后焦点会落到侧栏）
+                    kotlinx.coroutines.MainScope().launch {
+                        repeat(10) {
+                            kotlinx.coroutines.delay(100)
+                            if (runCatching { filterBtnFocus.requestFocus() }.isSuccess) return@launch
+                        }
+                    }
+                },
+                onApply = { newQuery ->
+                    vm.applyQuery(newQuery)
+                    showFilter = false
+                    kotlinx.coroutines.MainScope().launch {
+                        repeat(10) {
+                            kotlinx.coroutines.delay(100)
+                            if (runCatching { filterBtnFocus.requestFocus() }.isSuccess) return@launch
+                        }
+                    }
+                },
             )
         }
     }
@@ -781,9 +814,37 @@ class TvGridViewModel : ViewModel() {
         loadMore()
     }
 
+    /** 搜索：先做番号归一化（snos079 → SNOS-079，服务端对连字符敏感）。 */
+    /** 随机填满 4 行（4 × 当前列数），把当前列表换成随机结果。 */
+    fun randomTen(count: Int = 12) {
+        applyQuery(
+            query.copy(
+                pageSize = count.coerceIn(4, 60),
+                sort = "random",
+                seed = kotlin.random.Random.nextLong(1L, 1_000_000L),
+            ),
+        )
+    }
+
     fun applySearch(text: String) {
-        if (query.search == text) return
-        applyQuery(query.copy(search = text))
+        val normalized = com.javboss.android.core.text.SearchText.forSearch(text)
+        if (query.search == normalized) return
+        applyQuery(query.copy(search = normalized))
+    }
+
+    /** 盲盒（B1）：随机 seed + 当前筛选，取一条交给调用方打开。 */
+    fun openRandom(onPick: (Long) -> Unit, onEmpty: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val seed = kotlin.random.Random.nextLong(1L, 1_000_000L)
+            val q = query.copy(pageSize = 1, sort = "random", seed = seed)
+            when (val r = AppGraph.jav.list(q, offset = 0)) {
+                is ApiResult.Success -> {
+                    val item = r.data.items.firstOrNull()
+                    if (item == null) onEmpty("当前筛选下没有可随机的作品") else onPick(item.id)
+                }
+                is ApiResult.Failure -> onEmpty("随机失败：" + r.message)
+            }
+        }
     }
 
     val sortValue: String get() = query.sort
@@ -824,7 +885,8 @@ class TvGridViewModel : ViewModel() {
                         if (gen != generation) return@launch
                         loaded = loaded + result.data.items
                         items = filterWatched(loaded)
-                        total = result.data.total
+                        // 随机视图的「共 N」用已加载条数（服务端 total 仍是全库 729，显示会误导）
+                        total = if (query.sort == "random") loaded.size.toLong() else result.data.total
                         offset += result.data.items.size
                         if (result.data.items.isEmpty() || offset >= total) endReached = true
                     }
@@ -899,6 +961,9 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
     var modeOpen by remember { mutableStateOf(false) }
     var pendingMode by remember { mutableStateOf("auto") }
     var pinSetupOpen by remember { mutableStateOf(false) }
+    var pinChanging by remember { mutableStateOf(false) }
+    var pinOldInput by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
     var tvChecking by remember { mutableStateOf(false) }
     var tvUpdate by remember { mutableStateOf<com.javboss.android.data.update.UpdateChecker.UpdateInfo?>(null) }
     var tvUpdateMsg by remember { mutableStateOf<String?>(null) }
@@ -1006,8 +1071,12 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                         if (!f.exists()) {
                             message = "找不到文件：${f.absolutePath}"
                         } else {
-                            val n = com.javboss.android.data.subtitle.SubtitleExporter.importZipFrom(context, f)
-                            message = "已导入 $n 条字幕"
+                            val r = com.javboss.android.data.subtitle.SubtitleExporter.importZipDetailed(context, f)
+                            message = if (r.skipped > 0) {
+                                "已导入 " + r.imported + " 条，跳过 " + r.skipped + " 条（命名/体积/压缩比不合规）"
+                            } else {
+                                "已导入 " + r.imported + " 条字幕"
+                            }
                         }
                     }.onFailure { message = "导入失败：${it.message}" }
                 }
@@ -1067,6 +1136,17 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
             ) { modeOpen = true }
         }
         item {
+            TvSettingRow(
+                "优先直连播放",
+                if (prefs.preferDirect) "开：先试原文件直连，失败自动切 HLS" else "关：走 HLS 转码，失败自动切直连",
+            ) {
+                scope.launch {
+                    AppGraph.settings.setPreferDirect(!prefs.preferDirect)
+                    message = if (!prefs.preferDirect) "已开启优先直连" else "已关闭优先直连（走 HLS）"
+                }
+            }
+        }
+        item {
             TvSettingRow("播放器渲染", if (prefs.playerSurfaceView) "SurfaceView" else "TextureView（默认）") {
                 scope.launch {
                     AppGraph.settings.setPlayerSurfaceView(!prefs.playerSurfaceView)
@@ -1080,11 +1160,21 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
             TvSettingRow("电视密码锁", if (prefs.tvPinEnabled) "已开启" else "未开启") {
                 scope.launch {
                     if (prefs.tvPinEnabled) {
-                        AppGraph.settings.setTvPinEnabled(false)
+                        // 关闭时连哈希一起清掉：否则下次开启会残留一个谁都不知道的旧密码
+                        AppGraph.settings.clearTvPin()
+                        TvGlobalNav.pinJustSet.value = false
                         message = "已关闭电视密码锁"
                     } else {
                         pinSetupOpen = true
                     }
+                }
+            }
+        }
+        if (prefs.tvPinEnabled) {
+            item {
+                TvSettingRow("修改电视密码", "建议换一个只有你知道的") {
+                    pinChanging = true
+                    pinSetupOpen = true
                 }
             }
         }
@@ -1178,6 +1268,52 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                 }
             }
         }
+        item {
+            TvSettingRow("导出备份（TV）", "写到 Android/data/…/files/backup/javboss-backup.json") {
+                scope.launch {
+                    runCatching {
+                        val dir = java.io.File(context.getExternalFilesDir(null), "backup").apply { mkdirs() }
+                        val f = java.io.File(dir, "javboss-backup.json")
+                        f.writeText(com.javboss.android.di.AppGraph.backup.exportJson())
+                        message = "已导出备份 → " + f.absolutePath
+                    }.onFailure { message = "导出失败：" + it.message }
+                }
+            }
+        }
+        item {
+            TvSettingRow("导入备份（TV·仅数据）", "只恢复观看记录/字幕索引与选择/搜索历史，不动设置与地址") {
+                scope.launch {
+                    runCatching {
+                        val f = java.io.File(java.io.File(context.getExternalFilesDir(null), "backup"), "javboss-backup.json")
+                        if (!f.exists()) {
+                            message = "找不到文件：" + f.absolutePath
+                        } else {
+                            val text = f.readText()
+                            com.javboss.android.di.AppGraph.backup.validate(text)?.let { error(it) }
+                            val r = com.javboss.android.di.AppGraph.backup.importJson(text, applySettings = false)
+                            message = r.summary() + "（设置未改动）"
+                        }
+                    }.onFailure { message = "导入失败：" + it.message }
+                }
+            }
+        }
+        item {
+            TvSettingRow("导入备份（TV·含设置）", "连界面设置/服务端地址/镜像/代理一起覆盖（会先提示将改动什么）") {
+                scope.launch {
+                    runCatching {
+                        val f = java.io.File(java.io.File(context.getExternalFilesDir(null), "backup"), "javboss-backup.json")
+                        if (!f.exists()) {
+                            message = "找不到文件：" + f.absolutePath
+                        } else {
+                            val text = f.readText()
+                            com.javboss.android.di.AppGraph.backup.validate(text)?.let { error(it) }
+                            val r = com.javboss.android.di.AppGraph.backup.importJson(text, applySettings = true)
+                            message = r.summary()
+                        }
+                    }.onFailure { message = "导入失败：" + it.message }
+                }
+            }
+        }
         item { TvSectionHeader("其他") }
         item {
             TvSettingRow("诊断日志", "查看最近的崩溃信息") {
@@ -1185,7 +1321,14 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
                 crashOpen = true
             }
         }
-        item { TvSettingRow("退出登录", "") { onLogout() } }
+        item {
+            TvSettingRow("退出登录", "清除本机会话与诊断日志") {
+                scope.launch {
+                    runCatching { AppGraph.auth.logoutLocally() }
+                    onLogout()
+                }
+            }
+        }
         item {
             TvSettingRow(
                 "版本",
@@ -1238,28 +1381,65 @@ private fun TvSettingsScreen(onLogout: () -> Unit) {
     if (pinSetupOpen) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { pinSetupOpen = false },
-            title = { Text("设置电视密码") },
+            title = { Text(if (pinChanging) "修改电视密码" else "设置电视密码") },
             text = {
-                androidx.compose.material3.OutlinedTextField(
-                    value = pinInput,
-                    onValueChange = { v -> pinInput = v.filter { c -> c.isDigit() }.take(6) },
-                    label = { Text("4~6 位数字") },
-                    singleLine = true,
-                )
+                androidx.compose.foundation.layout.Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                    if (pinChanging) {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = pinOldInput,
+                            onValueChange = { v -> pinOldInput = v.filter { c -> c.isDigit() }.take(6) },
+                            label = { Text("当前密码") },
+                            singleLine = true,
+                        )
+                    }
+                    androidx.compose.material3.OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { v -> pinInput = v.filter { c -> c.isDigit() }.take(6) },
+                        label = { Text("新密码：4~6 位数字") },
+                        singleLine = true,
+                    )
+                    Text(
+                        "密码按加盐迭代哈希存在本机，忘记后只能在此界面重设。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    pinError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (pinInput.length >= 4) {
-                        scope.launch {
-                            AppGraph.settings.setTvPinEnabled(true)
-                            pinSetupOpen = false
-                            pinInput = ""
-                            message = "已开启电视密码锁"
+                    if (pinInput.length < 4) {
+                        pinError = "密码至少 4 位"
+                        return@TextButton
+                    }
+                    scope.launch {
+                        if (pinChanging) {
+                            val ok = runCatching { AppGraph.settings.verifyTvPin(pinOldInput) }.getOrDefault(false)
+                            if (!ok) {
+                                pinError = "当前密码不对"
+                                return@launch
+                            }
                         }
+                        AppGraph.settings.setTvPin(pinInput)
+                        TvGlobalNav.pinJustSet.value = true
+                        pinSetupOpen = false
+                        pinChanging = false
+                        pinInput = ""
+                        pinOldInput = ""
+                        pinError = null
+                        message = "电视密码锁已开启"
                     }
                 }) { Text("保存") }
             },
-            dismissButton = { TextButton(onClick = { pinSetupOpen = false }) { Text("取消") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    pinSetupOpen = false
+                    pinChanging = false
+                    pinInput = ""
+                    pinOldInput = ""
+                    pinError = null
+                }) { Text("取消") }
+            },
         )
     }
     }
@@ -1519,7 +1699,7 @@ private fun TvBatchFillDialog(onDismiss: () -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TvFocusable(
                             onClick = {
-                                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                com.javboss.android.di.AppGraph.appScope.launch {
                                     com.javboss.android.data.subtitle.SubtitleFill.markAllManualNoSubtitle(context)
                                 }
                             },

@@ -113,8 +113,8 @@ class VideoRepository(private val settings: SettingsStore) {
 
     fun baseUrl(): String = runBlockingUrl()
 
-    private fun runBlockingUrl(): String =
-        kotlinx.coroutines.runBlocking { settings.currentServerUrl() }
+    /** 取图 URL 在 Compose 组合期调用，必须同步；用内存快照，避免每次 runBlocking 读 DataStore。 */
+    private fun runBlockingUrl(): String = settings.currentServerUrlCached()
 }
 
 @Suppress("unused")

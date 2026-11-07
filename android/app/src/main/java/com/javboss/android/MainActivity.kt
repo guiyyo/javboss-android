@@ -21,9 +21,7 @@ class MainActivity : FragmentActivity() {
         // 调试包不启用 FLAG_SECURE，便于截图/录屏验证 UI（正式包仍按设置生效）
         if (BuildConfig.DEBUG) return
         val enabled = runCatching {
-            kotlinx.coroutines.runBlocking {
-                com.javboss.android.di.AppGraph.settings.uiPrefs.first { true }.privacyMode
-            }
+            com.javboss.android.di.AppGraph.settings.uiPrefsSnapshot().privacyMode
         }.getOrDefault(true)
         if (enabled) {
             window.setFlags(
@@ -41,9 +39,7 @@ class MainActivity : FragmentActivity() {
 
         // 「自动」模式在电视设备上直接切换到 TV 版页面（否则会被当成大屏平板）
         val mode = runCatching {
-            kotlinx.coroutines.runBlocking {
-                com.javboss.android.di.AppGraph.settings.uiPrefs.first { true }.uiMode
-            }
+            com.javboss.android.di.AppGraph.settings.uiPrefsSnapshot().uiMode
         }.getOrDefault("auto")
         if ((mode.isBlank() || mode == "auto") && this.isTvDevice()) {
             startActivity(android.content.Intent(this, TvMainActivity::class.java))
@@ -52,6 +48,7 @@ class MainActivity : FragmentActivity() {
         }
 
         applyPrivacyMode()
+        com.javboss.android.core.task.NotificationPermission.ensure(this)
         enableEdgeToEdge()
         setContent {
             JavBossTheme {

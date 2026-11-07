@@ -64,9 +64,10 @@ object UpdateChecker {
                     val url = o["browser_download_url"]?.jsonPrimitive?.content ?: continue
                     if (!url.endsWith(".apk", ignoreCase = true)) continue
                     apk = url
-                    sha256 = o["digest"]?.jsonPrimitive?.content
-                        ?.substringAfter("sha256:", "")
-                        ?.takeIf { it.length >= 32 }
+                    // R3：与 ApkInstaller 用同一套归一化规则（64 位 hex），不再各写一套
+                    sha256 = com.javboss.android.core.update.UpdateSecurity.normalizeDigest(
+                        o["digest"]?.jsonPrimitive?.content,
+                    )
                     break
                 }
             }
@@ -91,14 +92,26 @@ object UpdateChecker {
 
     /** 语义化版本比较：1.2.10 > 1.2.9 */
     fun isNewer(candidate: String, current: String): Boolean {
-        val a = parse(candidate)
-        val b = parse(current)
+        val (a, aPre) = parseWithPreRelease(candidate)
+        val (b, bPre) = parseWithPreRelease(current)
         for (i in 0 until maxOf(a.size, b.size)) {
             val x = a.getOrElse(i) { 0 }
             val y = b.getOrElse(i) { 0 }
             if (x != y) return x > y
         }
+        // 数字段相同：正式版高于预发布版（1.2.3 > 1.2.3-beta）
+        if (aPre != bPre) return !aPre
         return false
+    }
+
+    /** 数字段 + 是否预发布（-alpha/-beta/-rc/-pre/-dev 后缀）。 */
+    private fun parseWithPreRelease(v: String): Pair<List<Int>, Boolean> {
+        val cleaned = v.trim().removePrefix("v").removePrefix("V")
+        val lower = cleaned.lowercase()
+        val pre = cleaned.contains("-") && listOf("alpha", "beta", "rc", "pre", "dev").any { lower.contains(it) }
+        val base = cleaned.split("-")[0].split("+")[0]
+        val numbers = base.split(".").map { part -> part.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
+        return numbers to pre
     }
 
     private fun parse(v: String): List<Int> =
